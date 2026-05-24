@@ -538,15 +538,21 @@ export default function (pi: ExtensionAPI) {
           { type: "text", text: textContent },
         ];
         // Emit image blocks so pi-tui's built-in renderer handles display.
-        // Image components are added as direct children of the tool row
-        // (bypassing Box), avoiding viewport clipping from the TUI layout.
-        for (const r of results) {
-          if (r.mimeType.startsWith("image/")) {
-            content.push({
-              type: "image",
-              data: r.data.toString("base64"),
-              mimeType: r.mimeType,
-            });
+        // Skip on native Windows — ConPTY doesn't understand Kitty/iTerm2
+        // protocols and overwrites image rows with subsequent ANSI/text.
+        // Set PI_PAINT_INLINE=1 to force inline images on Windows (clipped).
+        // Use WSL for full inline image support.
+        const noInline = process.env.PI_PAINT_INLINE === "0"
+          || (process.platform === "win32" && process.env.PI_PAINT_INLINE !== "1");
+        if (!noInline) {
+          for (const r of results) {
+            if (r.mimeType.startsWith("image/")) {
+              content.push({
+                type: "image",
+                data: r.data.toString("base64"),
+                mimeType: r.mimeType,
+              });
+            }
           }
         }
 
