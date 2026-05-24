@@ -8,9 +8,12 @@
  *   COMFYUI_WORKFLOW_DIR - Workflow JSON folder
  *                          (default: project's comfyui_workflows/, falls back to package's workflows/)
  *
- * Registers 3 tools:
+ * Registers 6 tools:
  *   paint_list_workflows - List available workflow JSON files
  *   paint_get_details    - Inspect workflow variables, notes, etc.
+ *   paint_get_models     - Query ComfyUI server for available models
+ *   paint_queue_status   - Check current generation queue
+ *   paint_interrupt      - Cancel running generation
  *   paint               - Generate images/videos
  */
 
@@ -555,6 +558,182 @@ export default function (pi: ExtensionAPI) {
         };
       } catch (e) {
         throw new Error(`Paint error: ${(e as Error).message}`);
+      }
+    },
+  });
+
+  // ── paint_get_models ────────────────────────────────────────────────────
+
+  /** Known ComfyUI node classes that expose model lists */
+  const MODEL_NODES: Record<string, { key: string; label: string }> = {
+    CheckpointLoaderSimple: { key: "ckpt_name", label: "Checkpoints" },
+    CheckpointLoader: { key: "ckpt_name", label: "Checkpoints (legacy)" },
+    UNETLoader: { key: "unet_name", label: "Diffusion Models" },
+    CLIPLoader: { key: "clip_name", label: "CLIP" },
+    DualCLIPLoader: { key: "clip_name1", label: "Dual CLIP" },
+    VAELoader: { key: "vae_name", label: "VAE" },
+    LoraLoader: { key: "lora_name", label: "LoRA" },
+    LoraLoaderModelOnly: { key: "lora_name", label: "LoRA (model only)" },
+    ControlNetLoader: { key: "control_net_name", label: "ControlNet" },
+    UpscaleModelLoader: { key: "model_name", label: "Upscale Models" },
+    StyleModelLoader: { key: "style_model_name", label: "Style Models" },
+    GLIGENLoader: { key: "gligen_name", label: "GLIGEN" },
+    PhotoMakerLoader: { key: "photomaker_model_name", label: "PhotoMaker" },
+    InstantIDModelLoader: { key: "instantid_file", label: "InstantID" },
+  };
+
+  pi.registerTool({
+    name: "paint_get_models",
+    label: "Paint Get Models",
+    description:
+      "Query the ComfyUI server for available models. " +
+      "Returns models grouped by category (Checkpoints, LoRAs, VAEs, ControlNets, etc.). " +
+      "Use this to discover what models are installed before generating images, " +
+      "so you can reference specific model names in prompts or recommend workflows.",
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const info = (await comfyFetch(config.serverAddress, "/object_info")) as Record<
+          string,
+          {
+            input?: {
+              required?: Record<
+                string,
+                [Array<unknown>, Record<string, unknown>?]
+              >;
+            };
+          }
+        >;
+
+        const models: Record<string, string[]> = {};
+
+        for (const [nodeClass, mapping] of Object.entries(MODEL_NODES)) {
+          const nodeInfo = info[nodeClass];
+          if (!nodeInfo?.input?.required) continue;
+
+          const param = nodeInfo.input.required[mapping.key];
+          if (!param || !Array.isArray(param) || !Array.isArray(param[0])) continue;
+
+          const modelList = param[0] as string[];
+          if (modelList.length === 0) continue;
+
+          const label = mapping.label;
+          if (!models[label]) {
+            models[label] = [];
+          }
+          models[label].push(...modelList);
+        }
+
+        if (Object.keys(models).length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "No models found. Is ComfyUI running? Check COMFYUI_URL.",
+              },
+            ],
+            details: {},
+          };
+        }
+
+        const lines: string[] = ["**Available ComfyUI Models:**"];
+        for (const [category, names] of Object.entries(models)) {
+          const sorted = [...new Set(names)].sort();
+          lines.push(`\n**${category}:** ${sorted.join(", ")}`);
+        }
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: { models },
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to fetch models from ComfyUI: ${(e as Error).message}`,
+            },
+          ],
+          details: {},
+        };
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "paint_queue_status",
+    label: "Paint Queue Status",
+    description:
+      "Check the ComfyUI generation queue. " +
+      "Returns the currently running prompt and any pending prompts in the queue. " +
+      "Use this before submitting a new generation to avoid piling up redundant requests.",
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        const queue = (await comfyFetch(config.serverAddress, "/queue")) as {
+          queue_running: Array<unknown>;
+          queue_pending: Array<unknown>;
+        };
+
+        const running = queue.queue_running?.length ?? 0;
+        const pending = queue.queue_pending?.length ?? 0;
+
+        if (running === 0 && pending === 0) {
+          return {
+            content: [{ type: "text", text: "Queue is empty — no generations running or pending." }],
+            details: { running: 0, pending: 0 },
+          };
+        }
+
+        const lines: string[] = [];
+        if (running > 0) lines.push(`🔄 **Running:** ${running} prompt(s)`);
+        if (pending > 0) lines.push(`⏳ **Pending:** ${pending} prompt(s)`);
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: { running, pending },
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to query queue: ${(e as Error).message}`,
+            },
+          ],
+          details: {},
+        };
+      }
+    },
+  });
+
+  // ── paint_interrupt ──────────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "paint_interrupt",
+    label: "Paint Interrupt",
+    description:
+      "Interrupt the currently running ComfyUI generation. " +
+      "Use this when the user wants to cancel an in-progress image generation. " +
+      "After interrupting, the queue is cleared and you can submit a new prompt.",
+    parameters: Type.Object({}),
+    async execute() {
+      try {
+        await comfyFetch(config.serverAddress, "/interrupt", { method: "POST" });
+        return {
+          content: [{ type: "text", text: "Interrupted. Current generation cancelled and queue cleared." }],
+          details: { interrupted: true },
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Failed to interrupt: ${(e as Error).message}`,
+            },
+          ],
+          details: {},
+        };
       }
     },
   });

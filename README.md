@@ -31,6 +31,9 @@ Place your own `.json` workflow files in any of these locations.
 |------|-------------|
 | `paint_list_workflows` | List available workflow JSON files |
 | `paint_get_details` | Inspect a workflow's variables and notes |
+| `paint_get_models` | Query ComfyUI server for available models (checkpoints, LoRAs, etc.) |
+| `paint_queue_status` | Check the current generation queue (running + pending) |
+| `paint_interrupt` | Cancel the currently running generation |
 | `paint` | Generate images/videos from a prompt |
 
 ## Workflow Format
