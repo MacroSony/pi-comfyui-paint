@@ -19,7 +19,6 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Container, Image } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -395,7 +394,6 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "paint",
     label: "Paint",
-    renderShell: "self" as const,
     description:
       "Generates an image or video using ComfyUI with a prompt and optional workflow variables. " +
       "Returns the generated file paths. " +
@@ -536,8 +534,24 @@ export default function (pi: ExtensionAPI) {
         const fileList = results.map((r) => r.path).join("\n");
         const textContent = `Generated ${results.length} file(s):\n${fileList}`;
 
+        const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
+          { type: "text", text: textContent },
+        ];
+        // Emit image blocks so pi-tui's built-in renderer handles display.
+        // Image components are added as direct children of the tool row
+        // (bypassing Box), avoiding viewport clipping from the TUI layout.
+        for (const r of results) {
+          if (r.mimeType.startsWith("image/")) {
+            content.push({
+              type: "image",
+              data: r.data.toString("base64"),
+              mimeType: r.mimeType,
+            });
+          }
+        }
+
         return {
-          content: [{ type: "text", text: textContent }],
+          content,
           details: {
             files: results.map((r) => ({
               path: r.path,
@@ -551,34 +565,6 @@ export default function (pi: ExtensionAPI) {
       } catch (e) {
         throw new Error(`Paint error: ${(e as Error).message}`);
       }
-    },
-
-    renderResult(result, _options, theme, _context) {
-      const files = result.details?.files as Array<{
-        path: string;
-        filename: string;
-        mimeType: string;
-        data: string;
-      }> | undefined;
-      // Never return null — pi-tui's updateDisplay passes the return value
-      // directly to renderContainer.addChild() without null guard, so null
-      // gets pushed into Box.children and crashes Box.render().
-      if (!files || files.length === 0) return new Container();
-
-      const container = new Container();
-      for (const file of files) {
-        if (file.mimeType?.startsWith("image/") && file.data) {
-          container.addChild(
-            new Image(
-              file.data,
-              file.mimeType,
-              { fallbackColor: (s: string) => theme.fg("muted", s) },
-              { maxWidthCells: 56, maxHeightCells: 14, filename: file.filename },
-            ),
-          );
-        }
-      }
-      return container;
     },
   });
 
