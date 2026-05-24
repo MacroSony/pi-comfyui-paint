@@ -19,7 +19,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Container, Image } from "@earendil-works/pi-tui";
+import { Image } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -395,7 +395,6 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "paint",
     label: "Paint",
-    renderShell: "self" as const,
     description:
       "Generates an image or video using ComfyUI with a prompt and optional workflow variables. " +
       "Returns the generated file paths. " +
@@ -560,24 +559,17 @@ export default function (pi: ExtensionAPI) {
         mimeType: string;
         data: string;
       }> | undefined;
-      if (!files || files.length === 0 || !files.some((f) => f.mimeType?.startsWith("image/"))) {
-        return null;
-      }
+      if (!files || files.length === 0) return null;
 
-      const container = new Container();
-      for (const file of files) {
-        if (file.mimeType?.startsWith("image/") && file.data) {
-          container.addChild(
-            new Image(
-              file.data,
-              file.mimeType,
-              { fallbackColor: (s: string) => theme.fg("muted", s) },
-              { maxWidthCells: 56, maxHeightCells: 28, filename: file.filename },
-            ),
-          );
-        }
-      }
-      return container;
+      const imageFile = files.find((f) => f.mimeType?.startsWith("image/") && f.data);
+      if (!imageFile) return null;
+
+      return new Image(
+        imageFile.data,
+        imageFile.mimeType,
+        { fallbackColor: (s: string) => theme.fg("muted", s) },
+        { maxWidthCells: 56, maxHeightCells: 28, filename: imageFile.filename },
+      );
     },
   });
 
