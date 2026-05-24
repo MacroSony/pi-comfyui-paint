@@ -24,6 +24,40 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
+// ─── ImageKittyGuard ─────────────────────────────────────────────────────────
+
+/** Invisible Kitty APC marker.  Contains \x1b_G so pi-tui's isImageLine()
+ *  returns true, but i=0 so extractKittyImageIds() ignores it.  Kitty
+ *  terminals ignore data-less APC sequences, so this renders as nothing. */
+const KITTY_MARKER = "\x1b_Gi=0;\x1b\\";
+
+/** Wraps an Image component and injects kitty APC markers on every line
+ *  that doesn't already have one.  This prevents pi-tui's applyLineResets
+ *  from appending \x1b[0m SGR resets to empty lines after a kitty image
+ *  escape — which would cause WezTerm to clear the image overlay, leaving
+ *  only a "tiny top bit" visible. */
+class ImageKittyGuard {
+  private image: Image;
+  constructor(image: Image) {
+    this.image = image;
+  }
+  render(width: number): string[] {
+    const lines = this.image.render(width);
+    for (let i = 0; i < lines.length; i++) {
+      // Only inject on lines that aren't already image lines.
+      // The first line always has the escape for kitty; for iTerm2
+      // the escape is on the last line with cursor-up prefix.
+      if (!lines[i].includes("\x1b_G") && !lines[i].includes("\x1b]1337;File=")) {
+        lines[i] = KITTY_MARKER;
+      }
+    }
+    return lines;
+  }
+  invalidate(): void {
+    this.image.invalidate();
+  }
+}
+
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 interface PaintConfig {
@@ -395,6 +429,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "paint",
     label: "Paint",
+    renderShell: "self" as const,
     description:
       "Generates an image or video using ComfyUI with a prompt and optional workflow variables. " +
       "Returns the generated file paths. " +
@@ -567,14 +602,20 @@ export default function (pi: ExtensionAPI) {
       const container = new Container();
       for (const file of files) {
         if (file.mimeType?.startsWith("image/") && file.data) {
-          container.addChild(
-            new Image(
-              file.data,
-              file.mimeType,
-              { fallbackColor: (s: string) => theme.fg("muted", s) },
-              { maxWidthCells: 56, maxHeightCells: 28, filename: file.filename },
-            ),
+          const img = new Image(
+            file.data,
+            file.mimeType,
+            { fallbackColor: (s: string) => theme.fg("muted", s) },
+            { maxWidthCells: 56, maxHeightCells: 14, filename: file.filename },
           );
+          // Wrap Image to inject invisible kitty APC markers on empty
+          // lines. pi-tui's applyLineResets appends \x1b[0m to every
+          // non-image line, which causes WezTerm to clear the kitty
+          // image overlay after the first row — leaving only a "tiny
+          // top bit" visible.  Making every line an image line (by
+          // injecting \x1b_Gi=0;\x1b\ which Kitty/WezTerm ignore) prevents
+          // the SGR reset from being appended.
+          container.addChild(new ImageKittyGuard(img));
         }
       }
       return container;
