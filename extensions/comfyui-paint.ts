@@ -19,6 +19,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { Container, Image } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -541,6 +542,7 @@ export default function (pi: ExtensionAPI) {
               path: r.path,
               filename: r.filename,
               mimeType: r.mimeType,
+              data: r.data.toString("base64"),
             })),
             promptId,
           },
@@ -548,6 +550,33 @@ export default function (pi: ExtensionAPI) {
       } catch (e) {
         throw new Error(`Paint error: ${(e as Error).message}`);
       }
+    },
+
+    renderResult(result, _options, theme, _context) {
+      const files = result.details?.files as Array<{
+        path: string;
+        filename: string;
+        mimeType: string;
+        data: string;
+      }> | undefined;
+      if (!files || files.length === 0 || !files.some((f) => f.mimeType?.startsWith("image/"))) {
+        return null; // fallback to default text rendering
+      }
+
+      const container = new Container();
+      for (const file of files) {
+        if (file.mimeType?.startsWith("image/") && file.data) {
+          container.addChild(
+            new Image(
+              file.data,
+              file.mimeType,
+              { fallbackColor: (s: string) => theme.fg("muted", s) },
+              { maxWidthCells: 60, filename: file.filename },
+            ),
+          );
+        }
+      }
+      return container;
     },
   });
 

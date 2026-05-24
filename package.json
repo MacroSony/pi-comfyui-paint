@@ -1,6 +1,6 @@
 {
   "name": "pi-comfyui-paint",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "ComfyUI image/video generation extension for pi coding agent",
   "keywords": ["pi-package"],
   "license": "MIT",
