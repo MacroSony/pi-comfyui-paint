@@ -1,0 +1,185 @@
+{
+  "46": {
+    "inputs": {
+      "filename_prefix": "Anima",
+      "images": [
+        "63",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "61": {
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "62": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "63": {
+    "inputs": {
+      "samples": [
+        "66",
+        0
+      ],
+      "vae": [
+        "62",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "64": {
+    "inputs": {
+      "width": [
+        "69",
+        0
+      ],
+      "height": [
+        "71",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "65": {
+    "inputs": {
+      "text": [
+        "74",
+        0
+      ],
+      "clip": [
+        "61",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "66": {
+    "inputs": {
+      "seed": 971560318183724,
+      "steps": 30,
+      "cfg": 4,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "68",
+        0
+      ],
+      "positive": [
+        "67",
+        0
+      ],
+      "negative": [
+        "65",
+        0
+      ],
+      "latent_image": [
+        "64",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "67": {
+    "inputs": {
+      "text": [
+        "73",
+        0
+      ],
+      "clip": [
+        "61",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "68": {
+    "inputs": {
+      "unet_name": "anima_baseV10.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "69": {
+    "inputs": {
+      "value": 832
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]Width"
+    }
+  },
+  "71": {
+    "inputs": {
+      "value": 1216
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]Height"
+    }
+  },
+  "73": {
+    "inputs": {
+      "value": "masterpiece, best quality, score_7, safe, anime, 1girl, zhu yuan,zenless zone zero"
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "[VAR]PositivePrompt"
+    }
+  },
+  "74": {
+    "inputs": {
+      "value": "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia"
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "[VAR]NegativePrompt"
+    }
+  },
+  "77": {
+    "inputs": {
+      "value": "**Model:** Anima (anima_baseV10.safetensors). Trained on Danbooru tags, natural language captions, and tag+caption combinations.\n\n**Tag format:** Use lowercase with spaces (not underscores). Score tags are the only tags using underscores.\n\n**Recommended positive prefix:** masterpiece, best quality, score_7, safe, \n**Recommended negative:** worst quality, low quality, score_1, score_2, score_3, artist name\n\n**Tag order:** [quality/meta/year/safety tags] [1girl/1boy/etc] [character] [series] [artist] [general tags]\n\n**Quality tags (use either or both):** masterpiece, best quality, good quality, normal quality, low quality, worst quality — and/or — score_9 through score_1.\n\n**Time period:** year 2025, year 2024, ..., newest, recent, mid, early, old\n**Meta:** highres, absurdres, anime screenshot, jpeg artifacts, official art\n**Safety:** safe, sensitive, nsfw, explicit\n\n**Artists:** Prefix with @ (e.g. @big chungus). Required — effect is weak without @.\n\n**Prompt weighting** works but needs higher weight than typical SDXL (e.g. (chibi:2)).\n\n**Full example:** year 2025, newest, normal quality, score_5, highres, safe, 1girl, oomuro sakurako, yuru yuri, @nnn yryr, smile, brown hair, hat, solo, long hair, open mouth, looking at viewer, white background, simple background\n\n**Image With Text:** Anima is able to generate image with decent qualitied text with prompts like 'holding sign above head with red painted text \"Hello!\"'"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "[NOTE]"
+    }
+  }
+}
