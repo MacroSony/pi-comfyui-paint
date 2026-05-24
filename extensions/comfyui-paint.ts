@@ -532,29 +532,18 @@ export default function (pi: ExtensionAPI) {
         }
 
         const fileList = results.map((r) => r.path).join("\n");
-        const content: Array<{ type: "text"; text: string } | { type: "image"; source: { type: "base64"; mediaType: string; data: string } }> = [
-          {
-            type: "text",
-            text: `Generated ${results.length} file(s):\n${fileList}`,
-          },
-        ];
-
-        // Attach generated images/videos as content items
-        for (const r of results) {
-          const base64Data = r.data.toString("base64");
-          content.push({
-            type: "image",
-            source: {
-              type: "base64",
-              mediaType: r.mimeType,
-              data: base64Data,
-            },
-          });
-        }
+        const textContent = `Generated ${results.length} file(s):\n${fileList}`;
 
         return {
-          content,
-          details: { files: results, promptId },
+          content: [{ type: "text", text: textContent }],
+          details: {
+            files: results.map((r) => ({
+              path: r.path,
+              filename: r.filename,
+              mimeType: r.mimeType,
+            })),
+            promptId,
+          },
         };
       } catch (e) {
         throw new Error(`Paint error: ${(e as Error).message}`);
