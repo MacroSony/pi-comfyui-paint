@@ -395,6 +395,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "paint",
     label: "Paint",
+    renderShell: "self" as const,
     description:
       "Generates an image or video using ComfyUI with a prompt and optional workflow variables. " +
       "Returns the generated file paths. " +
@@ -560,7 +561,7 @@ export default function (pi: ExtensionAPI) {
         data: string;
       }> | undefined;
       if (!files || files.length === 0 || !files.some((f) => f.mimeType?.startsWith("image/"))) {
-        return null; // fallback to default text rendering
+        return null;
       }
 
       const container = new Container();
@@ -571,7 +572,7 @@ export default function (pi: ExtensionAPI) {
               file.data,
               file.mimeType,
               { fallbackColor: (s: string) => theme.fg("muted", s) },
-              { maxWidthCells: 60, filename: file.filename },
+              { maxWidthCells: 56, maxHeightCells: 28, filename: file.filename },
             ),
           );
         }
