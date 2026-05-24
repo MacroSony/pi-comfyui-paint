@@ -19,7 +19,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Image } from "@earendil-works/pi-tui";
+import { Container, Image } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -559,17 +559,25 @@ export default function (pi: ExtensionAPI) {
         mimeType: string;
         data: string;
       }> | undefined;
-      if (!files || files.length === 0) return null;
+      // Never return null — pi-tui's updateDisplay passes the return value
+      // directly to renderContainer.addChild() without null guard, so null
+      // gets pushed into Box.children and crashes Box.render().
+      if (!files || files.length === 0) return new Container();
 
-      const imageFile = files.find((f) => f.mimeType?.startsWith("image/") && f.data);
-      if (!imageFile) return null;
-
-      return new Image(
-        imageFile.data,
-        imageFile.mimeType,
-        { fallbackColor: (s: string) => theme.fg("muted", s) },
-        { maxWidthCells: 56, maxHeightCells: 28, filename: imageFile.filename },
-      );
+      const container = new Container();
+      for (const file of files) {
+        if (file.mimeType?.startsWith("image/") && file.data) {
+          container.addChild(
+            new Image(
+              file.data,
+              file.mimeType,
+              { fallbackColor: (s: string) => theme.fg("muted", s) },
+              { maxWidthCells: 56, maxHeightCells: 28, filename: file.filename },
+            ),
+          );
+        }
+      }
+      return container;
     },
   });
 
