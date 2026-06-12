@@ -1,3 +1,4 @@
 node_modules/
 *.log
 gg-apikey.env
+comfyui_workflows
