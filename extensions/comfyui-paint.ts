@@ -5,8 +5,10 @@
  *
  * Configuration (env vars or defaults):
  *   COMFYUI_URL          - ComfyUI server address (default: 127.0.0.1:8188)
- *   COMFYUI_WORKFLOW_DIR - Workflow JSON folder
- *                          (default: project's comfyui_workflows/, falls back to package's workflows/)
+ *   COMFYUI_WORKFLOW_DIR      - Workflow JSON folder
+ *                              (default: project's comfyui_workflows/, falls back to package's workflows/)
+ *   COMFYUI_INTERRUPT_ON_ABORT - Interrupt ComfyUI when a pi paint tool call is cancelled
+ *                                (default: off; set to 1/true/yes/on to enable)
  *
  * Registers 6 tools:
  *   paint_list_workflows - List available workflow JSON files
@@ -29,6 +31,11 @@ interface PaintConfig {
   serverAddress: string;
   workflowDir: string;
   clientId: string;
+  interruptOnAbort: boolean;
+}
+
+function envFlag(name: string): boolean {
+  return ["1", "true", "yes", "on"].includes((process.env[name] ?? "").toLowerCase());
 }
 
 function getConfig(cwd: string): PaintConfig {
@@ -47,6 +54,7 @@ function getConfig(cwd: string): PaintConfig {
     serverAddress: process.env.COMFYUI_URL || "127.0.0.1:8188",
     workflowDir,
     clientId: `pi-paint-${Math.random().toString(36).slice(2, 10)}`,
+    interruptOnAbort: envFlag("COMFYUI_INTERRUPT_ON_ABORT"),
   };
 }
 
@@ -174,32 +182,65 @@ async function queuePrompt(
   server: string,
   workflow: Record<string, unknown>,
   clientId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const body = JSON.stringify({ prompt: workflow, client_id: clientId });
   const result = (await comfyFetch(server, "/prompt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body,
+    signal,
   })) as ComfyUIQueueResult;
   return result.prompt_id;
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Paint cancelled"));
+      return;
+    }
+
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timeout);
+        reject(new Error("Paint cancelled"));
+      },
+      { once: true },
+    );
+  });
 }
 
 async function pollHistory(
   server: string,
   promptId: string,
+  signal?: AbortSignal,
   maxWaitMs = 600_000,
   pollIntervalMs = 1000,
 ): Promise<ComfyUIHistoryOutput> {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
-    const history = (await comfyFetch(server, `/history/${promptId}`)) as ComfyUIHistoryOutput;
+    if (signal?.aborted) {
+      throw new Error("Paint cancelled");
+    }
+
+    const history = (await comfyFetch(server, `/history/${promptId}`, { signal })) as ComfyUIHistoryOutput;
     // Check if the prompt_id is present (meaning execution completed)
     if (history[promptId]) {
       return history;
     }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
+    await abortableSleep(pollIntervalMs, signal);
   }
   throw new Error(`Timeout waiting for ComfyUI prompt ${promptId} after ${maxWaitMs}ms`);
+}
+
+async function interruptComfy(server: string): Promise<void> {
+  const res = await fetch(`http://${server}/interrupt`, { method: "POST" });
+  if (!res.ok) {
+    throw new Error(`ComfyUI /interrupt returned ${res.status}: ${await res.text()}`);
+  }
 }
 
 async function downloadOutput(
@@ -418,6 +459,7 @@ export default function (pi: ExtensionAPI) {
       ),
     }),
     async execute(_id, params, signal) {
+      let promptId: string | undefined;
       try {
         // 1. Resolve workflow
         const wfPath = resolveWorkflowPath(config.workflowDir, params.workflow);
@@ -464,9 +506,9 @@ export default function (pi: ExtensionAPI) {
         }
 
         // 5. Queue and wait
-        const promptId = await queuePrompt(config.serverAddress, promptWf, config.clientId);
+        promptId = await queuePrompt(config.serverAddress, promptWf, config.clientId, signal);
 
-        const history = await pollHistory(config.serverAddress, promptId);
+        const history = await pollHistory(config.serverAddress, promptId, signal);
         const promptHistory = history[promptId];
         if (!promptHistory || !promptHistory.outputs) {
           return {
@@ -569,6 +611,20 @@ export default function (pi: ExtensionAPI) {
           },
         };
       } catch (e) {
+        if (signal?.aborted) {
+          let interruptMessage = "";
+          if (config.interruptOnAbort && promptId) {
+            try {
+              await interruptComfy(config.serverAddress);
+              interruptMessage = " ComfyUI was interrupted because COMFYUI_INTERRUPT_ON_ABORT is enabled.";
+            } catch (interruptError) {
+              interruptMessage = ` Tried to interrupt ComfyUI, but that failed: ${(interruptError as Error).message}`;
+            }
+          } else if (promptId) {
+            interruptMessage = " ComfyUI may still be running; set COMFYUI_INTERRUPT_ON_ABORT=1 to interrupt it on cancellation.";
+          }
+          throw new Error(`Paint cancelled.${interruptMessage}`);
+        }
         throw new Error(`Paint error: ${(e as Error).message}`);
       }
     },
@@ -731,7 +787,7 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({}),
     async execute() {
       try {
-        await comfyFetch(config.serverAddress, "/interrupt", { method: "POST" });
+        await interruptComfy(config.serverAddress);
         return {
           content: [{ type: "text", text: "Interrupted. Current generation cancelled and queue cleared." }],
           details: { interrupted: true },

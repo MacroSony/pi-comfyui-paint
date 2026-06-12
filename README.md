@@ -26,6 +26,7 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.3
 |---------|---------|-------------|
 | `COMFYUI_URL` | `127.0.0.1:8188` | ComfyUI server address |
 | `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
+| `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to call ComfyUI `/interrupt` when a `paint` tool call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI may continue running. |
 
 ## Workflow Resolution
 
