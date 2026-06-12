@@ -2,10 +2,32 @@
   "name": "pi-comfyui-paint",
   "version": "0.0.3",
   "description": "ComfyUI image/video generation extension for pi coding agent",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "comfyui",
+    "image-generation",
+    "video-generation"
+  ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MacroSony/pi-comfyui-paint.git"
+  },
+  "homepage": "https://github.com/MacroSony/pi-comfyui-paint#readme",
+  "bugs": {
+    "url": "https://github.com/MacroSony/pi-comfyui-paint/issues"
+  },
+  "files": [
+    "extensions",
+    "workflows",
+    "README.md",
+    "LICENSE"
+  ],
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

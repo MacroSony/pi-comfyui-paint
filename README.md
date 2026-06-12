@@ -5,7 +5,19 @@ ComfyUI image/video generation extension for [pi](https://github.com/earendil-wo
 ## Install
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.1
+pi install npm:pi-comfyui-paint
+```
+
+Or install a pinned version:
+
+```bash
+pi install npm:pi-comfyui-paint@0.0.3
+```
+
+Development/git install:
+
+```bash
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.3
 ```
 
 ## Configuration
