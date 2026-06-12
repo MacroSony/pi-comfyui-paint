@@ -10,13 +10,14 @@
  *   COMFYUI_INTERRUPT_ON_ABORT - Interrupt ComfyUI when a pi paint tool call is cancelled
  *                                (default: off; set to 1/true/yes/on to enable)
  *
- * Registers 6 tools:
+ * Registers 7 tools:
  *   paint_list_workflows - List available workflow JSON files
  *   paint_get_details    - Inspect workflow variables, notes, etc.
+ *   paint_server_status  - Check ComfyUI connectivity and extension configuration
  *   paint_get_models     - Query ComfyUI server for available models
  *   paint_queue_status   - Check current generation queue
  *   paint_interrupt      - Cancel running generation
- *   paint               - Generate images/videos
+ *   paint                - Generate images/videos
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -243,6 +244,43 @@ async function interruptComfy(server: string): Promise<void> {
   }
 }
 
+interface ComfyUploadResult {
+  name: string;
+  subfolder?: string;
+  type?: string;
+}
+
+function resolveInputFilePath(cwd: string, filePath: string): string {
+  return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
+}
+
+function pickFileInputKey(keys: string[], expectedType: string): string | undefined {
+  const preferred = [expectedType, "image", "video", "file", "filename", "path"];
+  return preferred.find((key) => keys.includes(key)) ?? keys[0];
+}
+
+async function uploadInputFile(
+  server: string,
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<ComfyUploadResult> {
+  const data = fs.readFileSync(filePath);
+  const form = new FormData();
+  form.append("image", new Blob([data]), path.basename(filePath));
+  form.append("type", "input");
+  form.append("overwrite", "true");
+
+  const res = await fetch(`http://${server}/upload/image`, {
+    method: "POST",
+    body: form,
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(`ComfyUI /upload/image returned ${res.status}: ${await res.text()}`);
+  }
+  return (await res.json()) as ComfyUploadResult;
+}
+
 async function downloadOutput(
   server: string,
   nodeOutput: Record<
@@ -430,6 +468,70 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // ── paint_server_status ────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "paint_server_status",
+    label: "Paint Server Status",
+    description:
+      "Check ComfyUI connectivity and show the effective pi-comfyui-paint configuration. " +
+      "Use this to debug COMFYUI_URL, workflow discovery, queue state, and cancellation behavior before generating.",
+    parameters: Type.Object({}),
+    async execute() {
+      const workflowDirExists = fs.existsSync(config.workflowDir);
+      const workflows = workflowDirExists
+        ? fs.readdirSync(config.workflowDir).filter((f) => f.endsWith(".json")).sort()
+        : [];
+
+      const queueResult = await Promise.allSettled([
+        comfyFetch(config.serverAddress, "/queue"),
+        comfyFetch(config.serverAddress, "/system_stats"),
+      ]);
+
+      const queueEntry = queueResult[0];
+      const statsEntry = queueResult[1];
+      const queueOk = queueEntry.status === "fulfilled";
+      const queue = queueEntry.status === "fulfilled"
+        ? (queueEntry.value as { queue_running?: unknown[]; queue_pending?: unknown[] })
+        : undefined;
+
+      const lines = [
+        "**ComfyUI Paint Status**",
+        `Server: http://${config.serverAddress}`,
+        `Reachable: ${queueOk ? "yes" : "no"}`,
+        `Workflow directory: ${config.workflowDir}`,
+        `Workflow directory exists: ${workflowDirExists ? "yes" : "no"}`,
+        `Workflow count: ${workflows.length}`,
+        `Interrupt on abort: ${config.interruptOnAbort ? "enabled" : "disabled"}`,
+      ];
+
+      if (queue) {
+        lines.push(`Queue running: ${queue.queue_running?.length ?? 0}`);
+        lines.push(`Queue pending: ${queue.queue_pending?.length ?? 0}`);
+      }
+      if (queueEntry.status === "rejected") {
+        lines.push(`Queue error: ${(queueEntry.reason as Error).message}`);
+      }
+      if (statsEntry.status === "rejected") {
+        lines.push(`System stats error: ${(statsEntry.reason as Error).message}`);
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: {
+          serverAddress: config.serverAddress,
+          reachable: queueOk,
+          workflowDir: config.workflowDir,
+          workflowDirExists,
+          workflows,
+          interruptOnAbort: config.interruptOnAbort,
+          queue,
+          systemStats: statsEntry.status === "fulfilled" ? statsEntry.value : undefined,
+        },
+      };
+    },
+  });
+
   // ── paint ────────────────────────────────────────────────────────────────
 
   pi.registerTool({
@@ -455,6 +557,12 @@ export default function (pi: ExtensionAPI) {
         Type.Record(Type.String(), Type.Unknown(), {
           description:
             "Custom variables for the workflow (e.g., {'Width': 1024, 'Height': 1024, 'Seed': 12345}). See paint_get_details for available keys.",
+        }),
+      ),
+      input_files: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Local image file paths to upload into [FILE:type:order] workflow slots, in slot order. Relative paths are resolved from the current project directory.",
         }),
       ),
     }),
@@ -505,7 +613,42 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        // 5. Queue and wait
+        // 5. Upload and map input files into [FILE:type:order] slots
+        const uploadedInputs: Array<{ slot: number; path: string; uploaded: ComfyUploadResult; key: string }> = [];
+        if (params.input_files?.length) {
+          const slots = Object.entries(details.fileNodes)
+            .map(([order, info]) => ({ order: Number(order), ...info }))
+            .sort((a, b) => a.order - b.order);
+
+          if (slots.length === 0) {
+            throw new Error("input_files were provided, but this workflow has no [FILE:type:order] input slots.");
+          }
+          if (params.input_files.length > slots.length) {
+            throw new Error(`Received ${params.input_files.length} input file(s), but workflow only has ${slots.length} file slot(s).`);
+          }
+
+          for (let i = 0; i < params.input_files.length; i++) {
+            const slot = slots[i];
+            const inputPath = resolveInputFilePath(cwd, params.input_files[i]);
+            if (!fs.existsSync(inputPath)) {
+              throw new Error(`Input file not found: ${inputPath}`);
+            }
+
+            const key = pickFileInputKey(slot.keys, slot.expectedType);
+            if (!key) {
+              throw new Error(`File slot ${slot.order} has no inputs to set.`);
+            }
+
+            const uploaded = await uploadInputFile(config.serverAddress, inputPath, signal);
+            const node = promptWf[slot.nodeId] as Record<string, unknown>;
+            const inputs = (node.inputs ?? {}) as Record<string, unknown>;
+            inputs[key] = uploaded.name;
+            node.inputs = inputs;
+            uploadedInputs.push({ slot: slot.order, path: inputPath, uploaded, key });
+          }
+        }
+
+        // 6. Queue and wait
         promptId = await queuePrompt(config.serverAddress, promptWf, config.clientId, signal);
 
         const history = await pollHistory(config.serverAddress, promptId, signal);
@@ -608,6 +751,7 @@ export default function (pi: ExtensionAPI) {
               data: r.data.toString("base64"),
             })),
             promptId,
+            uploadedInputs,
           },
         };
       } catch (e) {

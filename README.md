@@ -44,10 +44,11 @@ Place your own `.json` workflow files in any of these locations.
 |------|-------------|
 | `paint_list_workflows` | List available workflow JSON files |
 | `paint_get_details` | Inspect a workflow's variables and notes |
+| `paint_server_status` | Check ComfyUI connectivity and effective extension configuration |
 | `paint_get_models` | Query ComfyUI server for available models (checkpoints, LoRAs, etc.) |
 | `paint_queue_status` | Check the current generation queue (running + pending) |
 | `paint_interrupt` | Cancel the currently running generation |
-| `paint` | Generate images/videos from a prompt |
+| `paint` | Generate images/videos from a prompt, with optional workflow variables and input files |
 
 ## Workflow Format
 
@@ -56,4 +57,6 @@ Workflow JSONs use `_meta.title` annotations:
 - `[VAR] Name` — Customizable variable (exposed as a prompt parameter)
 - `[NOTE]` — Documentation shown in `paint_get_details`
 - `[OUTPUT:type]` — Tagged output node
-- `[FILE:type:order]` — Input file slot
+- `[FILE:type:order]` — Input file slot for `paint.input_files`
+
+For workflows with `[FILE:type:order]` nodes, pass local image paths to `paint` as `input_files` in slot order. Relative paths are resolved from the current project directory, uploaded to ComfyUI as input files, and inserted into the annotated workflow nodes.
