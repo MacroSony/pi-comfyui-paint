@@ -10,14 +10,16 @@
  *   COMFYUI_INTERRUPT_ON_ABORT - Interrupt ComfyUI when a pi paint tool call is cancelled
  *                                (default: off; set to 1/true/yes/on to enable)
  *
- * Registers 7 tools:
- *   paint_list_workflows - List available workflow JSON files
- *   paint_get_details    - Inspect workflow variables, notes, etc.
- *   paint_server_status  - Check ComfyUI connectivity and extension configuration
- *   paint_get_models     - Query ComfyUI server for available models
- *   paint_queue_status   - Check current generation queue
- *   paint_interrupt      - Cancel running generation
- *   paint                - Generate images/videos
+ * Registers 9 tools:
+ *   paint_list_workflows          - List available workflow JSON files
+ *   paint_get_details             - Inspect workflow variables, notes, etc.
+ *   paint_validate_workflow       - Validate workflow annotations and structure
+ *   paint_copy_workflow_to_project - Copy bundled workflows into ./comfyui_workflows/
+ *   paint_server_status           - Check ComfyUI connectivity and extension configuration
+ *   paint_get_models              - Query ComfyUI server for available models
+ *   paint_queue_status            - Check current generation queue
+ *   paint_interrupt               - Cancel running generation
+ *   paint                         - Generate images/videos
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -31,6 +33,8 @@ import * as os from "node:os";
 interface PaintConfig {
   serverAddress: string;
   workflowDir: string;
+  projectWorkflowDir: string;
+  bundledWorkflowDir: string;
   clientId: string;
   interruptOnAbort: boolean;
 }
@@ -41,19 +45,21 @@ function envFlag(name: string): boolean {
 
 function getConfig(cwd: string): PaintConfig {
   // Package's own workflows dir as fallback
-  const packageWorkflowDir = path.join(__dirname, "..", "workflows");
+  const bundledWorkflowDir = path.join(__dirname, "..", "workflows");
+  const projectWorkflowDir = path.join(cwd, "comfyui_workflows");
 
   let workflowDir: string;
   if (process.env.COMFYUI_WORKFLOW_DIR) {
     workflowDir = process.env.COMFYUI_WORKFLOW_DIR;
   } else {
-    const projectDir = path.join(cwd, "comfyui_workflows");
-    workflowDir = fs.existsSync(projectDir) ? projectDir : packageWorkflowDir;
+    workflowDir = fs.existsSync(projectWorkflowDir) ? projectWorkflowDir : bundledWorkflowDir;
   }
 
   return {
     serverAddress: process.env.COMFYUI_URL || "127.0.0.1:8188",
     workflowDir,
+    projectWorkflowDir,
+    bundledWorkflowDir,
     clientId: `pi-paint-${Math.random().toString(36).slice(2, 10)}`,
     interruptOnAbort: envFlag("COMFYUI_INTERRUPT_ON_ABORT"),
   };
@@ -347,6 +353,48 @@ function resolveWorkflowPath(workflowDir: string, workflowName?: string): string
   throw new Error(`Workflow not found: ${name} (looked in ${workflowDir})`);
 }
 
+function validateWorkflow(wf: Record<string, unknown>): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const details = parseWorkflowDetails(wf) as WorkflowDetails & { rawVars?: WorkflowVariables };
+
+  if (Object.keys(wf).length === 0) {
+    errors.push("Workflow JSON is empty.");
+  }
+
+  const nodeEntries = Object.entries(wf).filter(([, node]) => node && typeof node === "object");
+  const classlessNodes = nodeEntries
+    .filter(([, node]) => !("class_type" in (node as Record<string, unknown>)))
+    .map(([nodeId]) => nodeId);
+  if (classlessNodes.length > 0) {
+    warnings.push(`Node(s) without class_type: ${classlessNodes.slice(0, 10).join(", ")}${classlessNodes.length > 10 ? "..." : ""}`);
+  }
+
+  const rawVars = details.rawVars ?? {};
+  if (!rawVars.PositivePrompt) {
+    warnings.push("No [VAR] PositivePrompt node found; paint.prompt will not be injected automatically.");
+  }
+  for (const [name, info] of Object.entries(rawVars)) {
+    if (info.keys.length === 0) {
+      warnings.push(`[VAR] ${name} has no inputs to set.`);
+    }
+  }
+
+  if (Object.keys(details.outputTypes).length === 0) {
+    warnings.push("No [OUTPUT:type] nodes found; paint will fall back to scanning all ComfyUI outputs.");
+  }
+
+  const fileOrders = Object.keys(details.fileNodes).map(Number).sort((a, b) => a - b);
+  for (const order of fileOrders) {
+    const slot = details.fileNodes[order];
+    if (!slot.keys.length) {
+      errors.push(`[FILE:${slot.expectedType}:${order}] has no inputs to set.`);
+    }
+  }
+
+  return { errors, warnings };
+}
+
 // ─── Extension ───────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -468,6 +516,156 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // ── paint_validate_workflow ────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "paint_validate_workflow",
+    label: "Paint Validate Workflow",
+    description:
+      "Validate a ComfyUI workflow JSON before generation. Checks parseability, [VAR] annotations, " +
+      "[OUTPUT:type] annotations, and [FILE:type:order] input slots. Use this when a workflow fails or before using a custom workflow.",
+    parameters: Type.Object({
+      workflow: Type.Optional(
+        Type.String({
+          description:
+            "The workflow file to validate. If omitted, validates the first available workflow.",
+        }),
+      ),
+    }),
+    async execute(_id, params) {
+      try {
+        const wfPath = resolveWorkflowPath(config.workflowDir, params.workflow);
+        const wf = loadWorkflowJson(wfPath);
+        if (!wf) {
+          return {
+            content: [{ type: "text", text: `Workflow is invalid JSON or unreadable: ${wfPath}` }],
+            details: { valid: false, workflow: path.basename(wfPath), errors: ["Invalid or unreadable JSON"], warnings: [] },
+          };
+        }
+
+        const details = parseWorkflowDetails(wf);
+        const validation = validateWorkflow(wf);
+        const valid = validation.errors.length === 0;
+        const lines = [
+          `**Workflow validation for '${path.basename(wfPath)}': ${valid ? "passed" : "failed"}**`,
+          `Nodes: ${Object.keys(wf).length}`,
+          `Variables: ${Object.keys(details.variables).length}`,
+          `Tagged outputs: ${Object.keys(details.outputTypes).length}`,
+          `Input file slots: ${Object.keys(details.inputSlots).length}`,
+        ];
+
+        if (validation.errors.length > 0) {
+          lines.push("\n❌ **Errors:**");
+          lines.push(...validation.errors.map((err) => `- ${err}`));
+        }
+        if (validation.warnings.length > 0) {
+          lines.push("\n⚠️ **Warnings:**");
+          lines.push(...validation.warnings.map((warning) => `- ${warning}`));
+        }
+        if (valid && validation.warnings.length === 0) {
+          lines.push("\nNo issues found.");
+        }
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: {
+            valid,
+            workflow: path.basename(wfPath),
+            errors: validation.errors,
+            warnings: validation.warnings,
+            variables: details.variables,
+            outputTypes: details.outputTypes,
+            inputSlots: details.inputSlots,
+          },
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: `Error validating workflow: ${(e as Error).message}` }],
+          details: { valid: false },
+        };
+      }
+    },
+  });
+
+  // ── paint_copy_workflow_to_project ──────────────────────────────────────
+
+  pi.registerTool({
+    name: "paint_copy_workflow_to_project",
+    label: "Paint Copy Workflow To Project",
+    description:
+      "Copy a bundled workflow into ./comfyui_workflows/ so it can be edited for the current project. " +
+      "Use this before customizing a bundled workflow instead of modifying package files.",
+    parameters: Type.Object({
+      workflow: Type.Optional(
+        Type.String({
+          description:
+            "Bundled workflow file to copy. If omitted, copies all bundled workflow JSON files.",
+        }),
+      ),
+      overwrite: Type.Optional(
+        Type.Boolean({
+          description: "Overwrite an existing project workflow file. Defaults to false.",
+        }),
+      ),
+    }),
+    async execute(_id, params) {
+      try {
+        if (!fs.existsSync(config.bundledWorkflowDir)) {
+          throw new Error(`Bundled workflow directory not found: ${config.bundledWorkflowDir}`);
+        }
+
+        const bundledFiles = fs.readdirSync(config.bundledWorkflowDir)
+          .filter((file) => file.endsWith(".json"))
+          .sort();
+        const selectedFiles = params.workflow
+          ? [path.basename(params.workflow.endsWith(".json") ? params.workflow : `${params.workflow}.json`)]
+          : bundledFiles;
+
+        if (selectedFiles.length === 0) {
+          throw new Error("No bundled workflows found to copy.");
+        }
+
+        fs.mkdirSync(config.projectWorkflowDir, { recursive: true });
+        const copied: string[] = [];
+        const skipped: string[] = [];
+
+        for (const file of selectedFiles) {
+          if (!bundledFiles.includes(file)) {
+            throw new Error(`Bundled workflow not found: ${file}`);
+          }
+          const src = path.join(config.bundledWorkflowDir, file);
+          const dest = path.join(config.projectWorkflowDir, file);
+          if (fs.existsSync(dest) && !params.overwrite) {
+            skipped.push(dest);
+            continue;
+          }
+          fs.copyFileSync(src, dest);
+          copied.push(dest);
+        }
+
+        const lines = [
+          `Project workflow directory: ${config.projectWorkflowDir}`,
+          `Copied ${copied.length} workflow(s).`,
+        ];
+        if (copied.length > 0) lines.push(...copied.map((file) => `- copied: ${file}`));
+        if (skipped.length > 0) {
+          lines.push(`Skipped ${skipped.length} existing workflow(s); pass overwrite=true to replace them.`);
+          lines.push(...skipped.map((file) => `- skipped: ${file}`));
+        }
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: { projectWorkflowDir: config.projectWorkflowDir, copied, skipped },
+        };
+      } catch (e) {
+        return {
+          content: [{ type: "text", text: `Error copying workflow: ${(e as Error).message}` }],
+          details: {},
+        };
+      }
+    },
+  });
+
   // ── paint_server_status ────────────────────────────────────────────────
 
   pi.registerTool({
@@ -499,8 +697,10 @@ export default function (pi: ExtensionAPI) {
         "**ComfyUI Paint Status**",
         `Server: http://${config.serverAddress}`,
         `Reachable: ${queueOk ? "yes" : "no"}`,
-        `Workflow directory: ${config.workflowDir}`,
-        `Workflow directory exists: ${workflowDirExists ? "yes" : "no"}`,
+        `Active workflow directory: ${config.workflowDir}`,
+        `Project workflow directory: ${config.projectWorkflowDir}`,
+        `Bundled workflow directory: ${config.bundledWorkflowDir}`,
+        `Active workflow directory exists: ${workflowDirExists ? "yes" : "no"}`,
         `Workflow count: ${workflows.length}`,
         `Interrupt on abort: ${config.interruptOnAbort ? "enabled" : "disabled"}`,
       ];
@@ -522,6 +722,8 @@ export default function (pi: ExtensionAPI) {
           serverAddress: config.serverAddress,
           reachable: queueOk,
           workflowDir: config.workflowDir,
+          projectWorkflowDir: config.projectWorkflowDir,
+          bundledWorkflowDir: config.bundledWorkflowDir,
           workflowDirExists,
           workflows,
           interruptOnAbort: config.interruptOnAbort,

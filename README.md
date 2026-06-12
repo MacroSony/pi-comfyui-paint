@@ -11,13 +11,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.0.3
+pi install npm:pi-comfyui-paint@0.0.4
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.3
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.4
 ```
 
 ## Configuration
@@ -36,7 +36,7 @@ Workflows are resolved in this order:
 2. `comfyui_workflows/` in your project root
 3. `workflows/` bundled with this package (fallback)
 
-Place your own `.json` workflow files in any of these locations.
+Place your own `.json` workflow files in any of these locations. To customize the bundled workflows, call `paint_copy_workflow_to_project` first and edit the copied files in `./comfyui_workflows/`.
 
 ## Tools
 
@@ -44,6 +44,8 @@ Place your own `.json` workflow files in any of these locations.
 |------|-------------|
 | `paint_list_workflows` | List available workflow JSON files |
 | `paint_get_details` | Inspect a workflow's variables and notes |
+| `paint_validate_workflow` | Validate a workflow's JSON structure and pi-comfyui-paint annotations |
+| `paint_copy_workflow_to_project` | Copy bundled workflows into `./comfyui_workflows/` for project customization |
 | `paint_server_status` | Check ComfyUI connectivity and effective extension configuration |
 | `paint_get_models` | Query ComfyUI server for available models (checkpoints, LoRAs, etc.) |
 | `paint_queue_status` | Check the current generation queue (running + pending) |
