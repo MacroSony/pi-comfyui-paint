@@ -11,13 +11,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.0.4
+pi install npm:pi-comfyui-paint@0.0.5
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.4
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.5
 ```
 
 ## Configuration
@@ -27,6 +27,8 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.4
 | `COMFYUI_URL` | `127.0.0.1:8188` | ComfyUI server address |
 | `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
 | `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to call ComfyUI `/interrupt` when a `paint` tool call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI may continue running. |
+| `COMFYUI_IMAGE_QUALITY` | `85` | JPEG quality (1–100) for images sent to the LLM provider. Set to `0` to send raw PNG with no compression. Original files on disk are never modified. |
+| `COMFYUI_IMAGE_MAX_DIMENSION` | `2048` | Resize images so the longest side ≤ this many pixels before sending to the LLM. Set to `0` to skip resizing. Original files on disk are never modified. |
 
 ## Workflow Resolution
 

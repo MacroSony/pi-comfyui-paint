@@ -29,6 +29,9 @@
       "./extensions"
     ]
   },
+  "dependencies": {
+    "sharp": "^0.33.0"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"

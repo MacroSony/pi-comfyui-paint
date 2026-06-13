@@ -4,11 +4,15 @@
  * Connects to a ComfyUI server for image/video generation.
  *
  * Configuration (env vars or defaults):
- *   COMFYUI_URL          - ComfyUI server address (default: 127.0.0.1:8188)
- *   COMFYUI_WORKFLOW_DIR      - Workflow JSON folder
- *                              (default: project's comfyui_workflows/, falls back to package's workflows/)
- *   COMFYUI_INTERRUPT_ON_ABORT - Interrupt ComfyUI when a pi paint tool call is cancelled
- *                                (default: off; set to 1/true/yes/on to enable)
+ *   COMFYUI_URL                 - ComfyUI server address (default: 127.0.0.1:8188)
+ *   COMFYUI_WORKFLOW_DIR        - Workflow JSON folder
+ *                                 (default: project's comfyui_workflows/, falls back to package's workflows/)
+ *   COMFYUI_INTERRUPT_ON_ABORT  - Interrupt ComfyUI when a pi paint tool call is cancelled
+ *                                 (default: off; set to 1/true/yes/on to enable)
+ *   COMFYUI_IMAGE_QUALITY       - JPEG quality for images sent to the LLM provider (1-100, default: 85).
+ *                                 Set to 0 to send raw PNG with no compression.
+ *   COMFYUI_IMAGE_MAX_DIMENSION - Resize images so the longest side ≤ this many pixels (default: 2048).
+ *                                 Set to 0 to skip resizing. Original files on disk are never modified.
  *
  * Registers 9 tools:
  *   paint_list_workflows          - List available workflow JSON files
@@ -22,11 +26,17 @@
  *   paint                         - Generate images/videos
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import sharp from "sharp";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+/** Callback for streaming progress updates during tool execution. */
+type OnUpdate = (update: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; details?: unknown }) => void;
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -37,6 +47,10 @@ interface PaintConfig {
   bundledWorkflowDir: string;
   clientId: string;
   interruptOnAbort: boolean;
+  /** JPEG quality 1-100 for images sent to the LLM. 0 = no compression (raw PNG). */
+  imageQuality: number;
+  /** Max pixels on the longest side when resizing images for the LLM. 0 = no resize. */
+  imageMaxDimension: number;
 }
 
 function envFlag(name: string): boolean {
@@ -62,6 +76,8 @@ function getConfig(cwd: string): PaintConfig {
     bundledWorkflowDir,
     clientId: `pi-paint-${Math.random().toString(36).slice(2, 10)}`,
     interruptOnAbort: envFlag("COMFYUI_INTERRUPT_ON_ABORT"),
+    imageQuality: parseInt(process.env.COMFYUI_IMAGE_QUALITY ?? "85", 10) || 85,
+    imageMaxDimension: parseInt(process.env.COMFYUI_IMAGE_MAX_DIMENSION ?? "2048", 10) || 2048,
   };
 }
 
@@ -71,12 +87,14 @@ interface WorkflowVariables {
   [name: string]: { nodeId: string; keys: string[]; defaults: unknown[] };
 }
 
-interface WorkflowDetails {
+/** Internal parsed workflow details (includes raw data used at generation time). */
+interface ParsedWorkflow {
   notes: string;
   variables: Record<string, unknown>;
   outputTypes: Record<string, string>;
   inputSlots: Record<number, { keys: string[]; expectedType: string }>;
   fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string }>;
+  rawVars: WorkflowVariables;
 }
 
 function loadWorkflowJson(workflowPath: string): Record<string, unknown> | null {
@@ -88,7 +106,7 @@ function loadWorkflowJson(workflowPath: string): Record<string, unknown> | null 
   }
 }
 
-function parseWorkflowDetails(wf: Record<string, unknown>): WorkflowDetails {
+function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflow {
   const rawVars: Record<string, { nodeId: string; keys: string[]; defaults: unknown[] }> = {};
   const outputTypes: Record<string, string> = {};
   const fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string }> = {};
@@ -147,7 +165,7 @@ function parseWorkflowDetails(wf: Record<string, unknown>): WorkflowDetails {
     inputSlots,
     fileNodes,
     rawVars,
-  } as WorkflowDetails & { rawVars: typeof rawVars };
+  };
 }
 
 // ─── ComfyUI HTTP helpers ────────────────────────────────────────────────────
@@ -356,7 +374,7 @@ function resolveWorkflowPath(workflowDir: string, workflowName?: string): string
 function validateWorkflow(wf: Record<string, unknown>): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const details = parseWorkflowDetails(wf) as WorkflowDetails & { rawVars?: WorkflowVariables };
+  const details = parseWorkflowDetails(wf);
 
   if (Object.keys(wf).length === 0) {
     errors.push("Workflow JSON is empty.");
@@ -395,6 +413,46 @@ function validateWorkflow(wf: Record<string, unknown>): { errors: string[]; warn
   return { errors, warnings };
 }
 
+// ─── Image compression for LLM provider ──────────────────────────────────────
+
+/**
+ * Compress an image buffer for sending to the LLM provider.
+ * - If quality is 0, returns the raw PNG data unchanged.
+ * - Otherwise resizes (if maxDimension > 0) and converts to JPEG at the given quality.
+ * Returns { data: base64 string, mimeType: string }.
+ */
+async function compressImageForLLM(
+  buf: Buffer,
+  mimeType: string,
+  quality: number,
+  maxDimension: number,
+): Promise<{ data: string; mimeType: string }> {
+  // No compression requested — pass through as-is
+  if (quality === 0) {
+    return { data: buf.toString("base64"), mimeType };
+  }
+
+  let pipeline = sharp(buf);
+  const metadata = await pipeline.metadata();
+
+  // Resize if the image exceeds maxDimension on its longest side
+  if (maxDimension > 0 && metadata.width && metadata.height) {
+    const longest = Math.max(metadata.width, metadata.height);
+    if (longest > maxDimension) {
+      pipeline = pipeline.resize({
+        width: maxDimension,
+        height: maxDimension,
+        fit: "inside",
+        withoutEnlargement: true,
+      });
+    }
+  }
+
+  // Convert to JPEG at the configured quality
+  const compressed = await pipeline.jpeg({ quality }).toBuffer();
+  return { data: compressed.toString("base64"), mimeType: "image/jpeg" };
+}
+
 // ─── Extension ───────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -409,8 +467,12 @@ export default function (pi: ExtensionAPI) {
     description:
       "Lists all available image generation workflows (JSON files) in the ComfyUI workflow folder. " +
       "Use this to browse what's available, then call paint_get_details for any workflow you want to use.",
+    promptSnippet: "List available ComfyUI workflow JSON files",
+    promptGuidelines: [
+      "Use paint_list_workflows to discover what workflows are available before calling paint or paint_get_details.",
+    ],
     parameters: Type.Object({}),
-    async execute() {
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       const dir = config.workflowDir;
       if (!fs.existsSync(dir)) {
         return {
@@ -445,6 +507,10 @@ export default function (pi: ExtensionAPI) {
       "(model recommendations, prompt style guidance), customizable variables with their default values, " +
       "output media types, and input file slots. " +
       "Call this before using 'paint' with a workflow you haven't inspected yet.",
+    promptSnippet: "Inspect a workflow's variables, notes, output types, and input file slots",
+    promptGuidelines: [
+      "Use paint_get_details before calling paint with an unfamiliar workflow to learn its variables, prompt style, and input requirements.",
+    ],
     parameters: Type.Object({
       workflow: Type.Optional(
         Type.String({
@@ -453,7 +519,7 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       try {
         const wfPath = resolveWorkflowPath(config.workflowDir, params.workflow);
         const wf = loadWorkflowJson(wfPath);
@@ -524,6 +590,10 @@ export default function (pi: ExtensionAPI) {
     description:
       "Validate a ComfyUI workflow JSON before generation. Checks parseability, [VAR] annotations, " +
       "[OUTPUT:type] annotations, and [FILE:type:order] input slots. Use this when a workflow fails or before using a custom workflow.",
+    promptSnippet: "Validate a workflow JSON's structure and pi-comfyui-paint annotations",
+    promptGuidelines: [
+      "Use paint_validate_workflow when a paint generation fails or before using a custom workflow to check for annotation errors.",
+    ],
     parameters: Type.Object({
       workflow: Type.Optional(
         Type.String({
@@ -532,7 +602,7 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       try {
         const wfPath = resolveWorkflowPath(config.workflowDir, params.workflow);
         const wf = loadWorkflowJson(wfPath);
@@ -595,6 +665,10 @@ export default function (pi: ExtensionAPI) {
     description:
       "Copy a bundled workflow into ./comfyui_workflows/ so it can be edited for the current project. " +
       "Use this before customizing a bundled workflow instead of modifying package files.",
+    promptSnippet: "Copy bundled workflows into ./comfyui_workflows/ for project customization",
+    promptGuidelines: [
+      "Use paint_copy_workflow_to_project before editing a bundled workflow so changes stay in the project and don't affect the package.",
+    ],
     parameters: Type.Object({
       workflow: Type.Optional(
         Type.String({
@@ -608,7 +682,7 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_id, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       try {
         if (!fs.existsSync(config.bundledWorkflowDir)) {
           throw new Error(`Bundled workflow directory not found: ${config.bundledWorkflowDir}`);
@@ -674,8 +748,12 @@ export default function (pi: ExtensionAPI) {
     description:
       "Check ComfyUI connectivity and show the effective pi-comfyui-paint configuration. " +
       "Use this to debug COMFYUI_URL, workflow discovery, queue state, and cancellation behavior before generating.",
+    promptSnippet: "Check ComfyUI server connectivity and extension configuration",
+    promptGuidelines: [
+      "Use paint_server_status to debug connectivity issues before generating images — it reports whether ComfyUI is reachable, which workflow directory is active, and the current queue state.",
+    ],
     parameters: Type.Object({}),
-    async execute() {
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       const workflowDirExists = fs.existsSync(config.workflowDir);
       const workflows = workflowDirExists
         ? fs.readdirSync(config.workflowDir).filter((f) => f.endsWith(".json")).sort()
@@ -703,6 +781,8 @@ export default function (pi: ExtensionAPI) {
         `Active workflow directory exists: ${workflowDirExists ? "yes" : "no"}`,
         `Workflow count: ${workflows.length}`,
         `Interrupt on abort: ${config.interruptOnAbort ? "enabled" : "disabled"}`,
+        `Image quality (LLM): ${config.imageQuality === 0 ? "raw PNG (no compression)" : `JPEG q${config.imageQuality}`}`,
+        `Image max dimension (LLM): ${config.imageMaxDimension === 0 ? "no resize" : `${config.imageMaxDimension}px`}`,
       ];
 
       if (queue) {
@@ -727,6 +807,8 @@ export default function (pi: ExtensionAPI) {
           workflowDirExists,
           workflows,
           interruptOnAbort: config.interruptOnAbort,
+          imageQuality: config.imageQuality,
+          imageMaxDimension: config.imageMaxDimension,
           queue,
           systemStats: statsEntry.status === "fulfilled" ? statsEntry.value : undefined,
         },
@@ -744,6 +826,12 @@ export default function (pi: ExtensionAPI) {
       "Returns the generated file paths. " +
       "You can specify a 'workflow' to change the style, and pass 'variables' to customize the generation process. " +
       "Call paint_list_workflows to browse available workflows, then paint_get_details for any workflow's variables and notes.",
+    promptSnippet: "Generate images/videos via ComfyUI with a prompt, optional workflow, variables, and input files",
+    promptGuidelines: [
+      "Use paint to generate images or videos. Always call paint_list_workflows first to see available workflows, then paint_get_details to learn a workflow's variables and prompt style before generating.",
+      "Use paint_queue_status before paint to avoid piling up redundant requests if the ComfyUI queue is busy.",
+      "Use paint_interrupt to cancel a running generation if the user changes their mind.",
+    ],
     parameters: Type.Object({
       prompt: Type.String({ description: "The positive prompt describing what you want to see." }),
       negative_prompt: Type.Optional(
@@ -768,7 +856,7 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
     }),
-    async execute(_id, params, signal) {
+    async execute(_toolCallId, params, signal, onUpdate, _ctx) {
       let promptId: string | undefined;
       try {
         // 1. Resolve workflow
@@ -786,7 +874,7 @@ export default function (pi: ExtensionAPI) {
 
         if (params.variables) {
           for (const [key, value] of Object.entries(params.variables)) {
-            const varInfo = (details as WorkflowDetails & { rawVars: Record<string, { nodeId: string; keys: string[] }> }).rawVars?.[key];
+            const varInfo = details.rawVars[key];
             if (varInfo && promptWf[varInfo.nodeId]) {
               const node = promptWf[varInfo.nodeId] as Record<string, unknown>;
               const inputs = (node.inputs ?? {}) as Record<string, unknown>;
@@ -799,19 +887,18 @@ export default function (pi: ExtensionAPI) {
         }
 
         // 4. Map standard prompt variables if they exist
-        const rawVars = (details as WorkflowDetails & { rawVars: Record<string, { nodeId: string; keys: string[] }> }).rawVars ?? {};
-        if (rawVars["PositivePrompt"]) {
-          const node = promptWf[rawVars["PositivePrompt"].nodeId] as Record<string, unknown>;
+        if (details.rawVars["PositivePrompt"]) {
+          const node = promptWf[details.rawVars["PositivePrompt"].nodeId] as Record<string, unknown>;
           const inputs = (node.inputs ?? {}) as Record<string, unknown>;
-          if (rawVars["PositivePrompt"].keys.length > 0) {
-            inputs[rawVars["PositivePrompt"].keys[0]] = params.prompt;
+          if (details.rawVars["PositivePrompt"].keys.length > 0) {
+            inputs[details.rawVars["PositivePrompt"].keys[0]] = params.prompt;
           }
         }
-        if (params.negative_prompt && rawVars["NegativePrompt"]) {
-          const node = promptWf[rawVars["NegativePrompt"].nodeId] as Record<string, unknown>;
+        if (params.negative_prompt && details.rawVars["NegativePrompt"]) {
+          const node = promptWf[details.rawVars["NegativePrompt"].nodeId] as Record<string, unknown>;
           const inputs = (node.inputs ?? {}) as Record<string, unknown>;
-          if (rawVars["NegativePrompt"].keys.length > 0) {
-            inputs[rawVars["NegativePrompt"].keys[0]] = params.negative_prompt;
+          if (details.rawVars["NegativePrompt"].keys.length > 0) {
+            inputs[details.rawVars["NegativePrompt"].keys[0]] = params.negative_prompt;
           }
         }
 
@@ -850,10 +937,11 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        // 6. Queue and wait
+        // 6. Queue and wait (with progress streaming)
+        onUpdate?.({ content: [{ type: "text", text: "Queuing prompt on ComfyUI…" }] });
         promptId = await queuePrompt(config.serverAddress, promptWf, config.clientId, signal);
 
-        const history = await pollHistory(config.serverAddress, promptId, signal);
+        const history = await pollHistory(config.serverAddress, promptId, signal, onUpdate);
         const promptHistory = history[promptId];
         if (!promptHistory || !promptHistory.outputs) {
           return {
@@ -862,9 +950,10 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
-        // 6. Download outputs
+        // 7. Download outputs
         const outputDir = path.join(os.tmpdir(), "pi-paint-outputs");
         fs.mkdirSync(outputDir, { recursive: true });
+        const genTimestamp = Date.now();
 
         const results: Array<{ path: string; filename: string; mimeType: string; data: Buffer }> = [];
         let counter = 0;
@@ -881,11 +970,12 @@ export default function (pi: ExtensionAPI) {
 
           const files = await downloadOutput(config.serverAddress, nodeOutput);
           for (const file of files) {
-            const outPath = path.join(outputDir, `generation_${counter}.${file.ext}`);
+            const outName = `paint_${genTimestamp}_${counter}.${file.ext}`;
+            const outPath = path.join(outputDir, outName);
             fs.writeFileSync(outPath, file.data);
             results.push({
               path: outPath,
-              filename: `generation_${counter}.${file.ext}`,
+              filename: outName,
               mimeType: file.mimeType,
               data: file.data,
             });
@@ -898,11 +988,12 @@ export default function (pi: ExtensionAPI) {
           for (const nodeOutput of Object.values(promptHistory.outputs)) {
             const files = await downloadOutput(config.serverAddress, nodeOutput);
             for (const file of files) {
-              const outPath = path.join(outputDir, `generation_${counter}.${file.ext}`);
+              const outName = `paint_${genTimestamp}_${counter}.${file.ext}`;
+              const outPath = path.join(outputDir, outName);
               fs.writeFileSync(outPath, file.data);
               results.push({
                 path: outPath,
-                filename: `generation_${counter}.${file.ext}`,
+                filename: outName,
                 mimeType: file.mimeType,
                 data: file.data,
               });
@@ -924,16 +1015,39 @@ export default function (pi: ExtensionAPI) {
         const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
           { type: "text", text: textContent },
         ];
-        // Emit image blocks so pi-tui's built-in renderer handles display.
-        // Skip on native Windows — ConPTY doesn't understand Kitty/iTerm2
-        // protocols and overwrites image rows with subsequent ANSI/text.
-        // Set PI_PAINT_INLINE=1 to force inline images on Windows (clipped).
-        // Use WSL for full inline image support.
+        // Build content blocks for the LLM provider.
+        // Images are always compressed (JPEG at COMFYUI_IMAGE_QUALITY, resized
+        // to COMFYUI_IMAGE_MAX_DIMENSION) before being sent to the LLM.
+        // Original files on disk are never modified.
+        //
+        // Inline TUI display of image blocks is skipped on native Windows
+        // (ConPTY doesn't understand Kitty/iTerm2 protocols) and when
+        // PI_PAINT_INLINE=0. The LLM still receives the compressed images
+        // regardless — only the terminal rendering is affected.
         const noInline = process.env.PI_PAINT_INLINE === "0"
           || (process.platform === "win32" && process.env.PI_PAINT_INLINE !== "1");
-        if (!noInline) {
-          for (const r of results) {
-            if (r.mimeType.startsWith("image/")) {
+
+        for (const r of results) {
+          if (r.mimeType.startsWith("image/")) {
+            const compressed = await compressImageForLLM(
+              r.data,
+              r.mimeType,
+              config.imageQuality,
+              config.imageMaxDimension,
+            );
+            // Always include the compressed image in content so the LLM can see it.
+            // The TUI renderer respects PI_PAINT_INLINE / platform to decide
+            // whether to emit Kitty/iTerm2 inline display protocols.
+            content.push({
+              type: "image",
+              data: compressed.data,
+              mimeType: compressed.mimeType,
+            });
+          } else if (r.mimeType.startsWith("video/")) {
+            // Videos are passed through as-is (too complex to compress inline).
+            // Only include if inline display is supported — video frames are
+            // large and the LLM can't meaningfully view raw video data anyway.
+            if (!noInline) {
               content.push({
                 type: "image",
                 data: r.data.toString("base64"),
@@ -950,7 +1064,6 @@ export default function (pi: ExtensionAPI) {
               path: r.path,
               filename: r.filename,
               mimeType: r.mimeType,
-              data: r.data.toString("base64"),
             })),
             promptId,
             uploadedInputs,
@@ -1004,8 +1117,12 @@ export default function (pi: ExtensionAPI) {
       "Returns models grouped by category (Checkpoints, LoRAs, VAEs, ControlNets, etc.). " +
       "Use this to discover what models are installed before generating images, " +
       "so you can reference specific model names in prompts or recommend workflows.",
+    promptSnippet: "Query ComfyUI for available models (checkpoints, LoRAs, VAEs, etc.)",
+    promptGuidelines: [
+      "Use paint_get_models to discover installed models before recommending a workflow or selecting a model name for paint variables.",
+    ],
     parameters: Type.Object({}),
-    async execute() {
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       try {
         const info = (await comfyFetch(config.serverAddress, "/object_info")) as Record<
           string,
@@ -1081,8 +1198,12 @@ export default function (pi: ExtensionAPI) {
       "Check the ComfyUI generation queue. " +
       "Returns the currently running prompt and any pending prompts in the queue. " +
       "Use this before submitting a new generation to avoid piling up redundant requests.",
+    promptSnippet: "Check the ComfyUI generation queue (running + pending)",
+    promptGuidelines: [
+      "Use paint_queue_status before calling paint to check if the ComfyUI queue is busy — avoid submitting redundant generations.",
+    ],
     parameters: Type.Object({}),
-    async execute() {
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       try {
         const queue = (await comfyFetch(config.serverAddress, "/queue")) as {
           queue_running: Array<unknown>;
@@ -1130,8 +1251,12 @@ export default function (pi: ExtensionAPI) {
       "Interrupt the currently running ComfyUI generation. " +
       "Use this when the user wants to cancel an in-progress image generation. " +
       "After interrupting, the queue is cleared and you can submit a new prompt.",
+    promptSnippet: "Cancel the currently running ComfyUI generation and clear the queue",
+    promptGuidelines: [
+      "Use paint_interrupt when the user wants to cancel an in-progress generation. After interrupting, a new paint call can be submitted.",
+    ],
     parameters: Type.Object({}),
-    async execute() {
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       try {
         await interruptComfy(config.serverAddress);
         return {
