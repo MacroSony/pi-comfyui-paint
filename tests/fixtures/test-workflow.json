@@ -1,0 +1,47 @@
+{
+  "1": {
+    "_meta": { "title": "[VAR] PositivePrompt" },
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "a beautiful landscape" }
+  },
+  "2": {
+    "_meta": { "title": "[VAR] NegativePrompt" },
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "bad quality, blurry" }
+  },
+  "3": {
+    "_meta": { "title": "[VAR] Width" },
+    "class_type": "EmptyLatentImage",
+    "inputs": { "width": 1024, "height": 1024 }
+  },
+  "4": {
+    "_meta": { "title": "[VAR] Seed" },
+    "class_type": "KSampler",
+    "inputs": { "seed": 42 }
+  },
+  "5": {
+    "_meta": { "title": "[NOTE]" },
+    "class_type": "Note",
+    "inputs": { "text": "This is a test workflow for unit testing." }
+  },
+  "6": {
+    "_meta": { "title": "Regular node without annotation" },
+    "class_type": "VAEDecode",
+    "inputs": { "samples": "" }
+  },
+  "7": {
+    "_meta": { "title": "[OUTPUT:image]" },
+    "class_type": "SaveImage",
+    "inputs": { "images": "" }
+  },
+  "8": {
+    "_meta": { "title": "[FILE:image:0]" },
+    "class_type": "LoadImage",
+    "inputs": { "image": "" }
+  },
+  "9": {
+    "_meta": { "title": "[FILE:mask:1]" },
+    "class_type": "LoadImage",
+    "inputs": { "image": "" }
+  }
+}

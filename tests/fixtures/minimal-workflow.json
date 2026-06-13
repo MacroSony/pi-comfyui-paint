@@ -1,0 +1,12 @@
+{
+  "1": {
+    "_meta": { "title": "[VAR] PositivePrompt" },
+    "class_type": "CLIPTextEncode",
+    "inputs": { "text": "anime style" }
+  },
+  "2": {
+    "_meta": { "title": "[OUTPUT:image]" },
+    "class_type": "SaveImage",
+    "inputs": { "images": "" }
+  }
+}
