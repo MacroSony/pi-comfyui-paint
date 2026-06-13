@@ -1,5 +1,7 @@
 # pi-comfyui-paint
 
+[![npm version](https://img.shields.io/npm/v/pi-comfyui-paint)](https://www.npmjs.com/package/pi-comfyui-paint)
+
 ComfyUI image/video generation extension for [pi](https://github.com/earendil-works/pi-coding-agent).
 
 ## Install
@@ -11,13 +13,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.0.5
+pi install npm:pi-comfyui-paint@0.0.6
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.5
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.6
 ```
 
 ## Configuration

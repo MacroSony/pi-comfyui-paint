@@ -28,7 +28,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions/comfyui-paint.ts"
     ]
   },
   "scripts": {
