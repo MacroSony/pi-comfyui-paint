@@ -1,6 +1,6 @@
 {
   "name": "pi-comfyui-paint",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "type": "module",
   "description": "ComfyUI image/video generation extension for pi coding agent",
   "keywords": [
@@ -20,7 +20,6 @@
     "url": "https://github.com/MacroSony/pi-comfyui-paint/issues"
   },
   "files": [
-    "extensions",
     "src",
     "workflows",
     "README.md",
@@ -28,7 +27,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/comfyui-paint.ts"
+      "./src/index.ts"
     ]
   },
   "scripts": {

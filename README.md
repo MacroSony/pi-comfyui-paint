@@ -13,13 +13,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.0.7
+pi install npm:pi-comfyui-paint@0.0.8
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.7
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.8
 ```
 
 ## Configuration
@@ -55,6 +55,7 @@ Place your own `.json` workflow files in any of these locations. To customize th
 | `paint_queue_status` | Check the current generation queue (running + pending) |
 | `paint_interrupt` | Cancel the currently running generation |
 | `paint` | Generate images/videos from a prompt, with optional workflow variables and input files |
+| `paint_search_danbooru_tags` | Search Danbooru to confirm tags and find related tags (supports multiple queries) |
 
 ## Workflow Format
 

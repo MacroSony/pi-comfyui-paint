@@ -10,24 +10,26 @@
  *   COMFYUI_IMAGE_QUALITY       - JPEG quality for images sent to the LLM provider (1-100, default: 85).
  *   COMFYUI_IMAGE_MAX_DIMENSION - Resize images so the longest side ≤ pixels (default: 2048).
  *
- * Registers 9 tools:
+ * Registers 10 tools:
  *   paint_list_workflows  paint_get_details       paint_validate_workflow
  *   paint_copy_workflow_to_project  paint_server_status  paint_get_models
  *   paint_queue_status    paint_interrupt         paint
+ *   paint_search_danbooru_tags
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { getConfig } from "../src/config.js";
-import { createListWorkflowsTool } from "../src/tools/list-workflows.js";
-import { createGetDetailsTool } from "../src/tools/get-details.js";
-import { createValidateWorkflowTool } from "../src/tools/validate-workflow.js";
-import { createCopyWorkflowTool } from "../src/tools/copy-workflow.js";
-import { createServerStatusTool } from "../src/tools/server-status.js";
-import { createGetModelsTool } from "../src/tools/get-models.js";
-import { createQueueStatusTool } from "../src/tools/queue-status.js";
-import { createInterruptTool } from "../src/tools/interrupt.js";
-import { createPaintTool } from "../src/tools/paint.js";
+import { getConfig } from "./config.js";
+import { createListWorkflowsTool } from "./tools/list-workflows.js";
+import { createGetDetailsTool } from "./tools/get-details.js";
+import { createValidateWorkflowTool } from "./tools/validate-workflow.js";
+import { createCopyWorkflowTool } from "./tools/copy-workflow.js";
+import { createServerStatusTool } from "./tools/server-status.js";
+import { createGetModelsTool } from "./tools/get-models.js";
+import { createQueueStatusTool } from "./tools/queue-status.js";
+import { createInterruptTool } from "./tools/interrupt.js";
+import { createPaintTool } from "./tools/paint.js";
+import { createSearchDanbooruTagsTool } from "./tools/search-danbooru-tags.js";
 
 export default function (pi: ExtensionAPI) {
   const cwd = process.cwd();
@@ -44,6 +46,7 @@ export default function (pi: ExtensionAPI) {
     createQueueStatusTool(config),
     createInterruptTool(config),
     createPaintTool(config, cwd),
+    createSearchDanbooruTagsTool(config),
   ];
 
   for (const tool of tools) {
@@ -78,6 +81,10 @@ function buildSchema(params: Record<string, { type: string; description: string 
       schema[name] = Type.Optional(Type.Unknown({ description: def.description }));
     } else if (def.type === "boolean") {
       schema[name] = Type.Boolean({ description: def.description });
+    } else if (def.type === "array") {
+      schema[name] = Type.Array(Type.String(), { description: def.description });
+    } else if (def.type === "number") {
+      schema[name] = Type.Number({ description: def.description });
     } else {
       schema[name] = def.type === "string"
         ? Type.String({ description: def.description })
