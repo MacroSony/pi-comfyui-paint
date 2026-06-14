@@ -7,6 +7,13 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { resolveWorkflowPath, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
 import {
+  applyPowerLoraOverrides,
+  getInstalledLoras,
+  loadLoraMetadata,
+  normalizeLoraOverrides,
+  validateLoraOverridesInstalled,
+} from "../lora.js";
+import {
   queuePrompt,
   pollHistory,
   uploadInputFile,
@@ -41,6 +48,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
       workflow: { type: "optional", description: "The workflow file to use (e.g., 'Anime.json'). Call paint_list_workflows to browse, then paint_get_details for that workflow's variables and notes." },
       variables: { type: "optional", description: "Custom variables for the workflow (e.g., {'Width': 1024, 'Height': 1024, 'Seed': 12345}). See paint_get_details for available keys." },
       input_files: { type: "optional", description: "Local image file paths to upload into [FILE:type:order] workflow slots, in slot order. Relative paths are resolved from the current project directory." },
+      loras: { type: "optional", description: "Optional LoRA overrides for [LORA:slot] Power Lora Loader slots. Preferred shape: {'base_style': {file:'...', strength:0.7}} or {'base_style': [{file:'...', strength:0.7}, ...]}. Overrides replace the contents of that slot." },
     },
     async execute(params, signal, onUpdate?: OnUpdate) {
       let promptId: string | undefined;
@@ -57,6 +65,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
 
         // 2. Parse workflow details
         const details = parseWorkflowDetails(wfRaw);
+        const loraMetadata = loadLoraMetadata(wfPath);
 
         // 3. Deep clone the workflow and apply variables
         const promptWf = JSON.parse(JSON.stringify(wfRaw)) as Record<string, unknown>;
@@ -93,7 +102,17 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           }
         }
 
-        // 5. Upload and map input files into [FILE:type:order] slots
+        // 5. Apply LoRA overrides into annotated/auto-detected Power Lora Loader slots.
+        const loraOverrides = normalizeLoraOverrides(params?.loras);
+        if (loraOverrides.length > 0) {
+          const installedLoras = await getInstalledLoras(config.serverAddress);
+          validateLoraOverridesInstalled(loraOverrides, installedLoras);
+        }
+        const appliedLoras = loraOverrides.length > 0
+          ? applyPowerLoraOverrides(promptWf, details.loraSlots, loraOverrides, loraMetadata)
+          : { applied: [] };
+
+        // 6. Upload and map input files into [FILE:type:order] slots
         const uploadedInputs: UploadedInput[] = [];
         const inputFiles = params?.input_files as string[] | undefined;
         if (inputFiles?.length) {
@@ -133,7 +152,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           }
         }
 
-        // 6. Queue and wait (with progress streaming)
+        // 7. Queue and wait (with progress streaming)
         onUpdate?.({ content: [{ type: "text", text: "Queuing prompt on ComfyUI…" }] });
         promptId = await queuePrompt(config.serverAddress, promptWf, config.clientId, signal);
 
@@ -146,7 +165,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           };
         }
 
-        // 7. Download outputs
+        // 8. Download outputs
         const outputDir = path.join(os.tmpdir(), "pi-paint-outputs");
         fs.mkdirSync(outputDir, { recursive: true });
         const genTimestamp = Date.now();
@@ -256,6 +275,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
             })),
             promptId,
             uploadedInputs,
+            appliedLoras: appliedLoras.applied,
           },
         };
       } catch (e) {

@@ -30,12 +30,49 @@ export interface WorkflowVariables {
 }
 
 /** Internal parsed workflow details (includes raw data used at generation time). */
+export interface LoraSlotItem {
+  key: string;
+  enabled: boolean;
+  file: string;
+  strength?: number;
+}
+
+export interface LoraSlot {
+  slot: string;
+  nodeId: string;
+  classType: string;
+  title: string;
+  annotated: boolean;
+  loaderType: "power" | "unknown";
+  items: LoraSlotItem[];
+}
+
+export interface LoraMetadata {
+  file: string;
+  displayName?: string;
+  activationPrompt?: string;
+  defaultStrength?: number;
+  description?: string;
+}
+
+export interface LoraOverrideItem {
+  file: string;
+  strength?: number;
+  on?: boolean;
+}
+
+export interface LoraOverride {
+  slot: string;
+  items: LoraOverrideItem[];
+}
+
 export interface ParsedWorkflow {
   notes: string;
   variables: Record<string, unknown>;
   outputTypes: Record<string, string>;
   inputSlots: Record<number, { keys: string[]; expectedType: string }>;
   fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string }>;
+  loraSlots: LoraSlot[];
   rawVars: WorkflowVariables;
 }
 

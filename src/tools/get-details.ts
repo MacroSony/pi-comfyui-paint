@@ -4,27 +4,34 @@
 
 import * as path from "node:path";
 import { resolveWorkflowPath, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
+import {
+  buildUsableLoras,
+  formatLoraDetailsText,
+  getInstalledLoras,
+  loadLoraMetadata,
+} from "../lora.js";
+import type { PaintConfig } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
-export function createGetDetailsTool(workflowDir: string): ToolRegistration {
+export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
   return {
     name: "paint_get_details",
     label: "Paint Get Details",
     description:
       "Inspect a specific generation workflow in detail. Returns: the workflow's notes/instructions " +
       "(model recommendations, prompt style guidance), customizable variables with their default values, " +
-      "output media types, and input file slots. " +
+      "output media types, input file slots, and LoRA slots/metadata when present. " +
       "Call this before using 'paint' with a workflow you haven't inspected yet.",
-    promptSnippet: "Inspect a workflow's variables, notes, output types, and input file slots",
+    promptSnippet: "Inspect a workflow's variables, notes, output types, input file slots, and LoRA metadata",
     promptGuidelines: [
-      "Use paint_get_details before calling paint with an unfamiliar workflow to learn its variables, prompt style, and input requirements.",
+      "Use paint_get_details before calling paint with an unfamiliar workflow to learn its variables, prompt style, LoRA slots, and input requirements.",
     ],
     parameters: {
       workflow: { type: "optional", description: "The name of the workflow file to inspect (e.g., 'SDXL_example.json'). If omitted, uses the first available workflow." },
     },
     async execute(params) {
       try {
-        const wfPath = resolveWorkflowPath(workflowDir, params?.workflow as string | undefined);
+        const wfPath = resolveWorkflowPath(config.workflowDir, params?.workflow as string | undefined);
         const wf = loadWorkflowJson(wfPath);
         if (!wf) {
           return {
@@ -34,6 +41,14 @@ export function createGetDetailsTool(workflowDir: string): ToolRegistration {
         }
         const details = parseWorkflowDetails(wf);
         const workflowName = path.basename(wfPath);
+        const loraMetadata = loadLoraMetadata(wfPath);
+        let installedLoras: string[] | undefined;
+        try {
+          installedLoras = await getInstalledLoras(config.serverAddress);
+        } catch {
+          installedLoras = undefined;
+        }
+        const usableLoras = buildUsableLoras(installedLoras, loraMetadata);
 
         const lines: string[] = [`**Workflow details for '${workflowName}':**`];
 
@@ -64,6 +79,13 @@ export function createGetDetailsTool(workflowDir: string): ToolRegistration {
           );
         }
 
+        const loraText = formatLoraDetailsText(
+          details.loraSlots,
+          usableLoras,
+          installedLoras?.length,
+        );
+        if (loraText) lines.push(loraText);
+
         return {
           content: [{ type: "text", text: lines.join("\n") }],
           details: {
@@ -72,6 +94,13 @@ export function createGetDetailsTool(workflowDir: string): ToolRegistration {
             variables: details.variables,
             outputTypes: details.outputTypes,
             inputSlots: details.inputSlots,
+            loras: {
+              supported: details.loraSlots.length > 0,
+              slots: details.loraSlots,
+              metadata: loraMetadata,
+              installedCount: installedLoras?.length,
+              usable: usableLoras,
+            },
           },
         };
       } catch (e) {

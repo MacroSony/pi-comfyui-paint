@@ -38,7 +38,7 @@ export default function (pi: ExtensionAPI) {
   // Build all tool definitions, then bridge each into pi's ToolDefinition API.
   const tools = [
     createListWorkflowsTool(config.workflowDir),
-    createGetDetailsTool(config.workflowDir),
+    createGetDetailsTool(config),
     createValidateWorkflowTool(config.workflowDir),
     createCopyWorkflowTool(config.bundledWorkflowDir, config.projectWorkflowDir),
     createServerStatusTool(config),

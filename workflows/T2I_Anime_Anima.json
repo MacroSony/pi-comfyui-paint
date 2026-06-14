@@ -72,8 +72,8 @@
         0
       ],
       "clip": [
-        "61",
-        0
+        "78",
+        1
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -90,7 +90,7 @@
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "68",
+        "78",
         0
       ],
       "positive": [
@@ -118,8 +118,8 @@
         0
       ],
       "clip": [
-        "61",
-        0
+        "78",
+        1
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -171,6 +171,31 @@
     "class_type": "PrimitiveString",
     "_meta": {
       "title": "[VAR]NegativePrompt"
+    }
+  },
+  "78": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": false,
+        "lora": "None",
+        "strength": 0
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "68",
+        0
+      ],
+      "clip": [
+        "61",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "[LORA:base_style] Power Lora Loader (rgthree)"
     }
   },
   "77": {

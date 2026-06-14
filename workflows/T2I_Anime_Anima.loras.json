@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "workflow": "T2I_Anime_Anima.json",
+  "loras": [
+    {
+      "file": "anima-base-1-masterpiece-v51.safetensors",
+      "displayName": "Masterpiece Quality",
+      "activationPrompt": "masterpiece, very aesthetic",
+      "defaultStrength": 0.7,
+      "description": "Aesthetic quality modifier LoRA trained on Anima Base 1. Use 'masterpiece, very aesthetic' in the positive prompt. Trained on manually rated masterpiece-tagged images at multi-res 1024-1536."
+    }
+  ]
+}

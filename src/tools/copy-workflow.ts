@@ -4,7 +4,12 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isWorkflowJsonFile } from "../workflow.js";
 import type { ToolRegistration } from "./tool-utils.js";
+
+function sidecarName(file: string): string {
+  return `${file.slice(0, -path.extname(file).length)}.loras.json`;
+}
 
 export function createCopyWorkflowTool(
   bundledWorkflowDir: string,
@@ -14,9 +19,9 @@ export function createCopyWorkflowTool(
     name: "paint_copy_workflow_to_project",
     label: "Paint Copy Workflow To Project",
     description:
-      "Copy a bundled workflow into ./comfyui_workflows/ so it can be edited for the current project. " +
+      "Copy a bundled workflow into .pi/comfyui_workflows/ so it can be edited for the current project. " +
       "Use this before customizing a bundled workflow instead of modifying package files.",
-    promptSnippet: "Copy bundled workflows into ./comfyui_workflows/ for project customization",
+    promptSnippet: "Copy bundled workflows into .pi/comfyui_workflows/ for project customization",
     promptGuidelines: [
       "Use paint_copy_workflow_to_project before editing a bundled workflow so changes stay in the project and don't affect the package.",
     ],
@@ -32,7 +37,7 @@ export function createCopyWorkflowTool(
 
         const bundledFiles = fs
           .readdirSync(bundledWorkflowDir)
-          .filter((file) => file.endsWith(".json"))
+          .filter(isWorkflowJsonFile)
           .sort();
         const selectedFiles = params?.workflow
           ? [path.basename(
@@ -60,6 +65,18 @@ export function createCopyWorkflowTool(
           }
           fs.copyFileSync(src, dest);
           copied.push(dest);
+
+          const sidecar = sidecarName(file);
+          const sidecarSrc = path.join(bundledWorkflowDir, sidecar);
+          const sidecarDest = path.join(projectWorkflowDir, sidecar);
+          if (fs.existsSync(sidecarSrc)) {
+            if (fs.existsSync(sidecarDest) && !params?.overwrite) {
+              skipped.push(sidecarDest);
+            } else {
+              fs.copyFileSync(sidecarSrc, sidecarDest);
+              copied.push(sidecarDest);
+            }
+          }
         }
 
         const lines = [

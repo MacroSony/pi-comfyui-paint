@@ -4,9 +4,15 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseLoraSlots } from "./lora.js";
 import type { ParsedWorkflow, WorkflowValidationResult, WorkflowVariables } from "./types.js";
 
 // ─── Loading ─────────────────────────────────────────────────────────────────
+
+/** True for runnable workflow JSON files. Excludes sidecars like *.loras.json. */
+export function isWorkflowJsonFile(file: string): boolean {
+  return file.endsWith(".json") && !file.endsWith(".loras.json");
+}
 
 /** Load and parse a workflow JSON file. Returns null on failure. */
 export function loadWorkflowJson(workflowPath: string): Record<string, unknown> | null {
@@ -28,7 +34,7 @@ export function loadWorkflowJson(workflowPath: string): Record<string, unknown> 
 export function resolveWorkflowPath(workflowDir: string, workflowName?: string): string {
   if (!workflowName) {
     if (fs.existsSync(workflowDir)) {
-      const files = fs.readdirSync(workflowDir).filter((f) => f.endsWith(".json"));
+      const files = fs.readdirSync(workflowDir).filter(isWorkflowJsonFile);
       if (files.length > 0) return path.join(workflowDir, files[0]);
     }
     throw new Error("No default workflow found and no workflow specified.");
@@ -53,6 +59,7 @@ export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflo
   const outputTypes: Record<string, string> = {};
   const fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string }> = {};
   const notesParts: string[] = [];
+  const loraSlots = parseLoraSlots(wf);
 
   for (const [nodeId, node] of Object.entries(wf)) {
     if (!node || typeof node !== "object") continue;
@@ -106,6 +113,7 @@ export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflo
     outputTypes,
     inputSlots,
     fileNodes,
+    loraSlots,
     rawVars,
   };
 }

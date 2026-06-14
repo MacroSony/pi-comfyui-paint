@@ -2,6 +2,9 @@
  * Tests for config module.
  */
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // We need to import the module after setting env vars,
@@ -83,7 +86,7 @@ describe("getConfig", () => {
     expect(config.imageQuality).toBe(85);
     expect(config.imageMaxDimension).toBe(2048);
     expect(config.clientId).toMatch(/^pi-paint-/);
-    expect(config.projectWorkflowDir).toContain("test-project/comfyui_workflows");
+    expect(config.projectWorkflowDir).toContain("test-project/.pi/comfyui_workflows");
   });
 
   it("respects COMFYUI_URL", async () => {
@@ -133,5 +136,20 @@ describe("getConfig", () => {
     const { getConfig } = await import("../src/config.js");
     const config = getConfig("/tmp/test");
     expect(config.workflowDir).toBe("/custom/workflows");
+  });
+
+  it("uses .pi/comfyui_workflows when present", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-"));
+    const workflowDir = path.join(projectDir, ".pi", "comfyui_workflows");
+    fs.mkdirSync(workflowDir, { recursive: true });
+
+    try {
+      const { getConfig } = await import("../src/config.js");
+      const config = getConfig(projectDir);
+      expect(config.projectWorkflowDir).toBe(workflowDir);
+      expect(config.workflowDir).toBe(workflowDir);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 });

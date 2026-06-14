@@ -2,6 +2,7 @@
  * paint_list_workflows tool.
  */
 
+import { isWorkflowJsonFile } from "../workflow.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
 export function createListWorkflowsTool(workflowDir: string): ToolRegistration {
@@ -26,11 +27,11 @@ export function createListWorkflowsTool(workflowDir: string): ToolRegistration {
       }
       const files = fs
         .readdirSync(workflowDir)
-        .filter((f) => f.endsWith(".json"))
+        .filter(isWorkflowJsonFile)
         .sort();
       if (files.length === 0) {
         return {
-          content: [{ type: "text", text: "No workflows found in the comfyui_workflows folder." }],
+          content: [{ type: "text", text: "No workflows found in the .pi/comfyui_workflows folder." }],
           details: {},
         };
       }

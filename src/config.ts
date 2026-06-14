@@ -29,7 +29,7 @@ function intFromEnv(name: string, fallback: number): number {
 export function getConfig(cwd: string): PaintConfig {
   // Package's own workflows dir as fallback
   const bundledWorkflowDir = path.join(__dirname, "..", "workflows");
-  const projectWorkflowDir = path.join(cwd, "comfyui_workflows");
+  const projectWorkflowDir = path.join(cwd, ".pi", "comfyui_workflows");
 
   let workflowDir: string;
   if (process.env.COMFYUI_WORKFLOW_DIR) {

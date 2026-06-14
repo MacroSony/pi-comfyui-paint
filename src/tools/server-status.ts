@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import { comfyFetch } from "../comfyui-client.js";
+import { isWorkflowJsonFile } from "../workflow.js";
 import type { PaintConfig } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
@@ -22,7 +23,7 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
     async execute() {
       const workflowDirExists = fs.existsSync(config.workflowDir);
       const workflows = workflowDirExists
-        ? fs.readdirSync(config.workflowDir).filter((f) => f.endsWith(".json")).sort()
+        ? fs.readdirSync(config.workflowDir).filter(isWorkflowJsonFile).sort()
         : [];
 
       const queueResult = await Promise.allSettled([
