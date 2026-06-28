@@ -13,13 +13,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.0.9
+pi install npm:pi-comfyui-paint@0.1.0
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.9
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.1.0
 ```
 
 ## Configuration
@@ -57,7 +57,9 @@ Place your own `.json` workflow files in any of these locations. To customize th
 | `paint` | Generate images/videos from a prompt, with optional workflow variables and input files |
 | `paint_search_danbooru_tags` | Search Danbooru to confirm tags and find related tags (supports multiple queries) |
 
-`paint_search_danbooru_tags` defaults to wildcard tag-name search. Pass `mode: "related"` to use Danbooru's related-tag endpoint for tags that commonly appear with a tag or search; optional related-mode parameters include `categories`, `order`, `search_sample_size`, and `tag_sample_size`.
+`paint_search_danbooru_tags` defaults to wildcard tag-name search. Pass `mode: "related"` to use Danbooru's related-tag endpoint for tags that commonly appear with a tag or search; optional related-mode parameters include `categories`, `order`, `search_sample_size`, and `tag_sample_size`. The tool warns when an input is not exact Danbooru tag spelling, and reports Danbooru request failures separately from successful empty results.
+
+If your environment uses `HTTP_PROXY` or `HTTPS_PROXY` for outbound access, Node may require `NODE_USE_ENV_PROXY=1` for Danbooru requests to use those proxy settings.
 
 ## ComfyUI Custom Node Dependencies
 
