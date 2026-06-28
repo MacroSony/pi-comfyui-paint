@@ -13,20 +13,20 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.0.8
+pi install npm:pi-comfyui-paint@0.0.9
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.8
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.0.9
 ```
 
 ## Configuration
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `COMFYUI_URL` | `127.0.0.1:8188` | ComfyUI server address |
+| `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
 | `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
 | `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to call ComfyUI `/interrupt` when a `paint` tool call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI may continue running. |
 | `COMFYUI_IMAGE_QUALITY` | `85` | JPEG quality (1–100) for images sent to the LLM provider. Set to `0` to send raw PNG with no compression. Original files on disk are never modified. |
@@ -56,6 +56,8 @@ Place your own `.json` workflow files in any of these locations. To customize th
 | `paint_interrupt` | Cancel the currently running generation |
 | `paint` | Generate images/videos from a prompt, with optional workflow variables and input files |
 | `paint_search_danbooru_tags` | Search Danbooru to confirm tags and find related tags (supports multiple queries) |
+
+`paint_search_danbooru_tags` defaults to wildcard tag-name search. Pass `mode: "related"` to use Danbooru's related-tag endpoint for tags that commonly appear with a tag or search; optional related-mode parameters include `categories`, `order`, `search_sample_size`, and `tag_sample_size`.
 
 ## ComfyUI Custom Node Dependencies
 

@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 // so we'll dynamic import within each test or use module-level setup.
 
 // Import the pure functions for testing
-import { envFlag } from "../src/config.js";
+import { envFlag, normalizeComfyUrl } from "../src/config.js";
 
 describe("envFlag", () => {
   it("returns true for '1'", () => {
@@ -62,6 +62,24 @@ describe("envFlag", () => {
   });
 });
 
+describe("normalizeComfyUrl", () => {
+  it("uses the full default URL when unset", () => {
+    expect(normalizeComfyUrl(undefined)).toBe("http://127.0.0.1:8188");
+  });
+
+  it("adds http:// for legacy host:port values", () => {
+    expect(normalizeComfyUrl("192.168.1.100:9199")).toBe("http://192.168.1.100:9199");
+  });
+
+  it("preserves https URLs", () => {
+    expect(normalizeComfyUrl("https://comfy.example.com")).toBe("https://comfy.example.com");
+  });
+
+  it("removes trailing slash, query, and hash", () => {
+    expect(normalizeComfyUrl("https://comfy.example.com/base/?x=1#top")).toBe("https://comfy.example.com/base");
+  });
+});
+
 describe("getConfig", () => {
   const originalEnv = { ...process.env };
 
@@ -81,7 +99,7 @@ describe("getConfig", () => {
   it("uses defaults when no env vars are set", async () => {
     const { getConfig } = await import("../src/config.js");
     const config = getConfig("/tmp/test-project");
-    expect(config.serverAddress).toBe("127.0.0.1:8188");
+    expect(config.serverAddress).toBe("http://127.0.0.1:8188");
     expect(config.interruptOnAbort).toBe(false);
     expect(config.imageQuality).toBe(85);
     expect(config.imageMaxDimension).toBe(2048);
@@ -89,11 +107,18 @@ describe("getConfig", () => {
     expect(config.projectWorkflowDir).toContain("test-project/.pi/comfyui_workflows");
   });
 
-  it("respects COMFYUI_URL", async () => {
+  it("respects COMFYUI_URL as a full URL", async () => {
+    process.env.COMFYUI_URL = "https://comfy.example.com";
+    const { getConfig } = await import("../src/config.js");
+    const config = getConfig("/tmp/test");
+    expect(config.serverAddress).toBe("https://comfy.example.com");
+  });
+
+  it("normalizes legacy COMFYUI_URL host:port values", async () => {
     process.env.COMFYUI_URL = "192.168.1.100:9199";
     const { getConfig } = await import("../src/config.js");
     const config = getConfig("/tmp/test");
-    expect(config.serverAddress).toBe("192.168.1.100:9199");
+    expect(config.serverAddress).toBe("http://192.168.1.100:9199");
   });
 
   it("respects COMFYUI_INTERRUPT_ON_ABORT", async () => {

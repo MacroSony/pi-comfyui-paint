@@ -4,7 +4,7 @@
  * Connects to a ComfyUI server for image/video generation.
  *
  * Configuration (env vars or defaults):
- *   COMFYUI_URL                 - ComfyUI server address (default: 127.0.0.1:8188)
+ *   COMFYUI_URL                 - ComfyUI base URL (default: http://127.0.0.1:8188)
  *   COMFYUI_WORKFLOW_DIR        - Workflow JSON folder
  *   COMFYUI_INTERRUPT_ON_ABORT  - Interrupt ComfyUI when a pi paint tool call is cancelled
  *   COMFYUI_IMAGE_QUALITY       - JPEG quality for images sent to the LLM provider (1-100, default: 85).
@@ -58,7 +58,7 @@ export default function (pi: ExtensionAPI) {
       promptGuidelines: tool.promptGuidelines,
       parameters: buildSchema(tool.parameters),
       execute(_toolCallId: any, params: any, signal: any, onUpdate: any, _ctx: any) {
-        return tool.execute(params as any, signal) as any;
+        return tool.execute(params as any, signal, onUpdate) as any;
       },
     } as any);
   }

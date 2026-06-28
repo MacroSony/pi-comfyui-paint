@@ -41,7 +41,7 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
 
       const lines = [
         "**ComfyUI Paint Status**",
-        `Server: http://${config.serverAddress}`,
+        `Server: ${config.serverAddress}`,
         `Reachable: ${queueOk ? "yes" : "no"}`,
         `Active workflow directory: ${config.workflowDir}`,
         `Project workflow directory: ${config.projectWorkflowDir}`,

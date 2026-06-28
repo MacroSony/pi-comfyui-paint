@@ -4,10 +4,31 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  buildComfyUrl,
   resolveInputFilePath,
   pickFileInputKey,
   abortableSleep,
 } from "../src/comfyui-client.js";
+
+// ─── buildComfyUrl ──────────────────────────────────────────────────────────
+
+describe("buildComfyUrl", () => {
+  it("preserves full http URLs", () => {
+    expect(buildComfyUrl("http://127.0.0.1:8188", "/queue")).toBe("http://127.0.0.1:8188/queue");
+  });
+
+  it("preserves full https URLs", () => {
+    expect(buildComfyUrl("https://comfy.example.com", "/queue")).toBe("https://comfy.example.com/queue");
+  });
+
+  it("normalizes legacy host:port values", () => {
+    expect(buildComfyUrl("127.0.0.1:8188", "/queue")).toBe("http://127.0.0.1:8188/queue");
+  });
+
+  it("preserves path-prefixed base URLs", () => {
+    expect(buildComfyUrl("https://example.com/comfy/", "/queue")).toBe("https://example.com/comfy/queue");
+  });
+});
 
 // ─── resolveInputFilePath ────────────────────────────────────────────────────
 

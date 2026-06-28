@@ -11,6 +11,7 @@ import type { PaintConfig } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188";
 
 /** Parse a boolean env flag (accepts 1/true/yes/on). */
 export function envFlag(name: string): boolean {
@@ -23,6 +24,21 @@ function intFromEnv(name: string, fallback: number): number {
   if (raw === undefined || raw === "") return fallback;
   const parsed = parseInt(raw, 10);
   return isNaN(parsed) ? fallback : parsed;
+}
+
+/** Normalize COMFYUI_URL to a base URL. Bare host:port values keep working as http://host:port. */
+export function normalizeComfyUrl(raw: string | undefined): string {
+  const value = (raw ?? DEFAULT_COMFYUI_URL).trim();
+  const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(value)
+    ? value
+    : value
+      ? `http://${value}`
+      : DEFAULT_COMFYUI_URL;
+
+  const url = new URL(withProtocol);
+  url.hash = "";
+  url.search = "";
+  return url.toString().replace(/\/+$/, "");
 }
 
 /** Build the PaintConfig for a given working directory. */
@@ -39,7 +55,7 @@ export function getConfig(cwd: string): PaintConfig {
   }
 
   return {
-    serverAddress: process.env.COMFYUI_URL || "127.0.0.1:8188",
+    serverAddress: normalizeComfyUrl(process.env.COMFYUI_URL),
     workflowDir,
     projectWorkflowDir,
     bundledWorkflowDir,

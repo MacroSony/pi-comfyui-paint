@@ -13,12 +13,22 @@ import type {
 
 // ─── Generic fetch ───────────────────────────────────────────────────────────
 
+export function buildComfyUrl(server: string, endpoint: string): string {
+  const trimmed = server.trim();
+  const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+  const base = withProtocol.replace(/\/+$/, "");
+  const suffix = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  return `${base}${suffix}`;
+}
+
 export async function comfyFetch(
   server: string,
   endpoint: string,
   options: RequestInit = {},
 ): Promise<unknown> {
-  const url = `http://${server}${endpoint}`;
+  const url = buildComfyUrl(server, endpoint);
   const res = await fetch(url, options);
   if (!res.ok) {
     throw new Error(`ComfyUI ${endpoint} returned ${res.status}: ${await res.text()}`);
@@ -69,7 +79,7 @@ export async function pollHistory(
 // ─── Interrupt ───────────────────────────────────────────────────────────────
 
 export async function interruptComfy(server: string): Promise<void> {
-  const res = await fetch(`http://${server}/interrupt`, { method: "POST" });
+  const res = await fetch(buildComfyUrl(server, "/interrupt"), { method: "POST" });
   if (!res.ok) {
     throw new Error(`ComfyUI /interrupt returned ${res.status}: ${await res.text()}`);
   }
@@ -97,7 +107,7 @@ export async function uploadInputFile(
   form.append("type", "input");
   form.append("overwrite", "true");
 
-  const res = await fetch(`http://${server}/upload/image`, {
+  const res = await fetch(buildComfyUrl(server, "/upload/image"), {
     method: "POST",
     body: form,
     signal,
@@ -126,7 +136,7 @@ export async function downloadOutput(
         subfolder: item.subfolder,
         type: item.type,
       });
-      const res = await fetch(`http://${server}/view?${params}`);
+      const res = await fetch(buildComfyUrl(server, `/view?${params}`));
       if (!res.ok) continue;
 
       const buf = Buffer.from(await res.arrayBuffer());
