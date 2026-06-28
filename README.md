@@ -139,3 +139,5 @@ To load multiple LoRAs into one Power Lora Loader slot, use an array:
 ```
 
 LoRA overrides replace the contents of the named slot. Activation tags are not added automatically; put them in `prompt` yourself based on `paint_get_details` metadata.
+
+**Path separators:** Always use forward slashes (`/`) in `file` values, matching ComfyUI's `lora_name` list (e.g. `Krea2/KNPV3.safetensors`). Backslash paths are normalized to forward slashes automatically, but prefer the canonical form. Slot names come from `paint_get_details` (LoRA slots); valid `file` names come from `paint_get_models` (LoRA category) or the "Usable LoRA metadata" in `paint_get_details`. If a LoRA's sidecar metadata declares an `activationPrompt`, copy that tag into `prompt` — it is not injected automatically.

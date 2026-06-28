@@ -57,6 +57,7 @@ export default function (pi: ExtensionAPI) {
       promptSnippet: tool.promptSnippet,
       promptGuidelines: tool.promptGuidelines,
       parameters: buildSchema(tool.parameters),
+      ...(tool.prepareArguments ? { prepareArguments: tool.prepareArguments } : {}),
       execute(_toolCallId: any, params: any, signal: any, onUpdate: any, _ctx: any) {
         return tool.execute(params as any, signal, onUpdate) as any;
       },

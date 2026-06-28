@@ -156,6 +156,41 @@ describe("validateLoraOverridesInstalled", () => {
   });
 });
 
+describe("path separator normalization (Windows backslash defense)", () => {
+  it("normalizeLoraOverrides converts backslashes to forward slashes", () => {
+    const overrides = normalizeLoraOverrides({
+      base: { file: "Krea2\\KNPV3.safetensors", strength: 1 },
+    });
+    expect(overrides[0].items[0].file).toBe("Krea2/KNPV3.safetensors");
+  });
+
+  it("validateLoraOverridesInstalled accepts a backslash path when installed uses forward slashes", () => {
+    expect(() => validateLoraOverridesInstalled(
+      [{ slot: "base", items: [{ file: "Krea2\\KNPV3.safetensors" }] }],
+      ["Krea2/KNPV3.safetensors"],
+    )).not.toThrow();
+  });
+
+  it("applyPowerLoraOverrides writes a forward-slash path into the node", () => {
+    const wf: Record<string, unknown> = {
+      "71": {
+        class_type: "Power Lora Loader (rgthree)",
+        inputs: { lora_1: { on: false, lora: "None", strength: 0 } },
+        _meta: { title: "[LORA:base_style] Power Lora Loader (rgthree)" },
+      },
+    };
+    const slots = parseLoraSlots(wf);
+    applyPowerLoraOverrides(
+      wf,
+      slots,
+      [{ slot: "base_style", items: [{ file: "Krea2\\KNPV3.safetensors", strength: 1 }] }],
+      [],
+    );
+    const inputs = ((wf["71"] as Record<string, unknown>).inputs as Record<string, unknown>);
+    expect(inputs.lora_1).toEqual({ on: true, lora: "Krea2/KNPV3.safetensors", strength: 1 });
+  });
+});
+
 describe("applyPowerLoraOverrides", () => {
   it("replaces PowerLora slot contents", () => {
     const wf: Record<string, unknown> = {

@@ -1,6 +1,6 @@
 {
   "name": "pi-comfyui-paint",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "ComfyUI image/video generation extension for pi coding agent",
   "keywords": [

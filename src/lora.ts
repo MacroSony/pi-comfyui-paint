@@ -106,7 +106,7 @@ export function loadLoraMetadata(workflowPath: string): LoraMetadata[] {
 }
 
 export function metadataByFile(metadata: LoraMetadata[]): Record<string, LoraMetadata> {
-  return Object.fromEntries(metadata.map((entry) => [entry.file, entry]));
+  return Object.fromEntries(metadata.map((entry) => [normalizeLoraPath(entry.file), entry]));
 }
 
 /** Query ComfyUI object_info for installed LoRA names. */
@@ -133,8 +133,8 @@ export function buildUsableLoras(installed: string[] | undefined, metadata: Lora
   // Workflow details should only advertise LoRAs intentionally documented for that workflow.
   // If ComfyUI is reachable, filter sidecar metadata to installed files; if not, show metadata as-is.
   if (!installed) return metadata;
-  const installedSet = new Set(installed);
-  return metadata.filter((entry) => installedSet.has(entry.file));
+  const installedSet = new Set(installed.map(normalizeLoraPath));
+  return metadata.filter((entry) => installedSet.has(normalizeLoraPath(entry.file)));
 }
 
 export function formatLoraDetailsText(slots: LoraSlot[], usable: LoraMetadata[], installedCount?: number): string {
@@ -153,7 +153,7 @@ export function formatLoraDetailsText(slots: LoraSlot[], usable: LoraMetadata[],
   }
 
   if (installedCount != null) {
-    lines.push(`\nInstalled ComfyUI LoRAs detected: ${installedCount}`);
+    lines.push(`\nInstalled ComfyUI LoRAs detected: ${installedCount} (call \`paint_get_models\` to list filenames)`);
   }
 
   if (usable.length > 0) {
@@ -197,7 +197,10 @@ function normalizeOverrideEntry(slot: string, rawItems: unknown[]): LoraOverride
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .filter((item) => typeof item.file === "string" && item.file.length > 0)
     .map((item) => ({
-      file: item.file as string,
+      // ComfyUI's lora_name list uses POSIX separators (e.g. "Krea2/KNPV3.safetensors").
+      // Models sometimes copy Windows-style paths with backslashes ("Krea2\\KNPV3.safetensors"),
+      // which rgthree then fails to match and silently skips the LoRA. Normalize to POSIX.
+      file: normalizeLoraPath(item.file as string),
       strength: typeof item.strength === "number" ? item.strength : undefined,
       on: typeof item.on === "boolean" ? item.on : undefined,
     }));
@@ -205,15 +208,21 @@ function normalizeOverrideEntry(slot: string, rawItems: unknown[]): LoraOverride
   return slot && items.length > 0 ? { slot, items } : null;
 }
 
+/** Normalize a LoRA file path to POSIX separators so it matches ComfyUI's lora_name list. */
+export function normalizeLoraPath(file: string): string {
+  return file.replace(/\\/g, "/");
+}
+
 export function validateLoraOverridesInstalled(overrides: LoraOverride[], installed: string[]): void {
-  const installedSet = new Set(installed);
-  const requested = overrides.flatMap((override) => override.items.map((item) => item.file));
+  const installedSet = new Set(installed.map(normalizeLoraPath));
+  const requested = overrides.flatMap((override) => override.items.map((item) => normalizeLoraPath(item.file)));
   const missing = [...new Set(requested.filter((file) => !installedSet.has(file)))];
   if (missing.length === 0) return;
 
   const suggestions = missing.flatMap((file) => {
     const basename = path.basename(file).toLowerCase().replace(/\.safetensors$/, "");
     return installed
+      .map(normalizeLoraPath)
       .filter((candidate) => candidate.toLowerCase().includes(basename) || basename.includes(path.basename(candidate).toLowerCase().replace(/\.safetensors$/, "")))
       .slice(0, 5);
   });
@@ -249,11 +258,12 @@ export function applyPowerLoraOverrides(
     const existingKeys = Object.keys(inputs).filter((key) => /^lora_\d+$/i.test(key));
     for (let i = 0; i < override.items.length; i++) {
       const item = override.items[i];
-      const info = meta[item.file];
+      const file = normalizeLoraPath(item.file);
+      const info = meta[file];
       const key = `lora_${i + 1}`;
       const strength = item.strength ?? info?.defaultStrength ?? 0.7;
-      inputs[key] = { on: item.on ?? true, lora: item.file, strength };
-      applied.push({ slot: override.slot, key, file: item.file, strength });
+      inputs[key] = { on: item.on ?? true, lora: file, strength };
+      applied.push({ slot: override.slot, key, file, strength });
     }
 
     // Overrides replace the slot contents; disable leftover existing entries.

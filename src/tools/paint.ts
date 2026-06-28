@@ -41,14 +41,31 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
       "Use paint to generate images or videos. Always call paint_list_workflows first to see available workflows, then paint_get_details to learn a workflow's variables and prompt style before generating.",
       "Use paint_queue_status before paint to avoid piling up redundant requests if the ComfyUI queue is busy.",
       "Use paint_interrupt to cancel a running generation if the user changes their mind.",
+      "If paint_get_details reports LoRA slots or usable LoRA metadata, pass `loras` overrides using those slot names, copy any activationPrompt into `prompt`, and use `paint_get_models` to confirm valid `file` names. Use forward slashes in paths.",
     ],
+    prepareArguments(args) {
+      // Some models (Opus 4.6, GLM-5.1) send object/array params as JSON strings instead
+      // of parsed JSON. Parse them back so the execute() body receives real objects.
+      if (!args || typeof args !== "object") return args as Record<string, unknown>;
+      for (const key of ["variables", "loras", "input_files"]) {
+        const v = (args as Record<string, unknown>)[key];
+        if (typeof v === "string" && v.trim().length > 0) {
+          try {
+            (args as Record<string, unknown>)[key] = JSON.parse(v);
+          } catch {
+            // leave as-is; execute() will surface a clear error if shape is wrong
+          }
+        }
+      }
+      return args as Record<string, unknown>;
+    },
     parameters: {
       prompt: { type: "string", description: "The positive prompt describing what you want to see." },
       negative_prompt: { type: "optional", description: "What you want to avoid in the generation." },
       workflow: { type: "optional", description: "The workflow file to use (e.g., 'Anime.json'). Call paint_list_workflows to browse, then paint_get_details for that workflow's variables and notes." },
       variables: { type: "optional", description: "Custom variables for the workflow (e.g., {'Width': 1024, 'Height': 1024, 'Seed': 12345}). See paint_get_details for available keys." },
       input_files: { type: "optional", description: "Local image file paths to upload into [FILE:type:order] workflow slots, in slot order. Relative paths are resolved from the current project directory." },
-      loras: { type: "optional", description: "Optional LoRA overrides for [LORA:slot] Power Lora Loader slots. Preferred shape: {'base_style': {file:'...', strength:0.7}} or {'base_style': [{file:'...', strength:0.7}, ...]}. Overrides replace the contents of that slot." },
+      loras: { type: "optional", description: "Optional LoRA overrides for [LORA:slot] Power Lora Loader slots. Preferred shape: {'base_style': {file:'...', strength:0.7}} or {'base_style': [{file:'...', strength:0.7}, ...]}. Overrides replace the contents of that slot. Slot names come from paint_get_details (LoRA slots); valid 'file' values come from paint_get_models (LoRA category) or the 'Usable LoRA metadata' in paint_get_details. Use POSIX path separators (forward slash '/'). If a LoRA has an activationPrompt in its metadata, add it to 'prompt' yourself — it is not added automatically. Omitted strength defaults to the sidecar's defaultStrength, else 0.7." },
     },
     async execute(params, signal, onUpdate?: OnUpdate) {
       let promptId: string | undefined;
