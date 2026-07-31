@@ -21,11 +21,56 @@ import {
   resolveInputFilePath,
   pickFileInputKey,
   interruptComfy,
+  extractExecutionError,
 } from "../comfyui-client.js";
 import { compressImageForLLM } from "../image-compression.js";
 import type { PaintConfig, GenerationResult, UploadedInput } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 import type { OnUpdate } from "../types.js";
+
+/**
+ * Build a warning when [FILE:type:order] slots are left uncovered by input_files.
+ * Uncovered slots silently fall back to their node defaults, which often surprises
+ * users into thinking their prompt was used as text-to-image.
+ * Returns undefined when there is nothing to warn about.
+ */
+export function collectFileSlotWarnings(
+  wfRaw: Record<string, unknown>,
+  inputFiles: unknown,
+  fileSlots: Array<{ order: number; nodeId: string; keys: string[]; expectedType: string }>,
+): string | undefined {
+  if (fileSlots.length === 0) return undefined;
+  const providedCount = Array.isArray(inputFiles) ? inputFiles.length : 0;
+  if (providedCount >= fileSlots.length) return undefined;
+  const uncovered = fileSlots.slice(providedCount);
+  const defaults = uncovered
+    .map((slot) => {
+      const node = wfRaw[slot.nodeId] as Record<string, unknown> | undefined;
+      const inputs = (node?.inputs ?? {}) as Record<string, unknown>;
+      let nonString = false;
+      for (const key of slot.keys) {
+        // Skip the LoadImage "upload" widget key — its literal default is not a file.
+        if (key === "upload") continue;
+        const v = inputs[key];
+        if (typeof v === "string" && v.trim() !== "") {
+          return `slot ${slot.order} → ${v}`;
+        }
+        if (v !== null && v !== undefined && typeof v !== "string") {
+          nonString = true;
+        }
+      }
+      return nonString
+        ? `slot ${slot.order} → (default present, non-string)`
+        : `slot ${slot.order} → (no default)`;
+    })
+    .join("; ");
+  const missing = uncovered.map((s) => s.order).join(", ");
+  return (
+    `workflow has ${fileSlots.length} [FILE] input slot(s) but only ${providedCount} of ` +
+    `${fileSlots.length} input file(s) provided; the file input node(s) for slot(s) ${missing} ` +
+    `will fall back to their default inputs (${defaults})`
+  );
+}
 
 export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistration {
   return {
@@ -39,7 +84,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
     promptSnippet: "Generate images/videos via ComfyUI with a prompt, optional workflow, variables, and input files",
     promptGuidelines: [
       "Use paint to generate images or videos. Always call paint_list_workflows first to see available workflows, then paint_get_details to learn a workflow's variables and prompt style before generating.",
-      "Use paint_queue_status before paint to avoid piling up redundant requests if the ComfyUI queue is busy.",
+      "Use paint_server_status before paint to check the ComfyUI queue and avoid piling up redundant requests if it is busy.",
       "Use paint_interrupt to cancel a running generation if the user changes their mind.",
       "If paint_get_details reports LoRA slots or usable LoRA metadata, pass `loras` overrides using those slot names, copy any activationPrompt into `prompt`, and use `paint_get_models` to confirm valid `file` names. Use forward slashes in paths.",
     ],
@@ -47,22 +92,27 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
       // Some models (Opus 4.6, GLM-5.1) send object/array params as JSON strings instead
       // of parsed JSON. Parse them back so the execute() body receives real objects.
       if (!args || typeof args !== "object") return args as Record<string, unknown>;
+      const a = args as Record<string, unknown>;
       for (const key of ["variables", "loras", "input_files"]) {
-        const v = (args as Record<string, unknown>)[key];
+        const v = a[key];
         if (typeof v === "string" && v.trim().length > 0) {
           try {
-            (args as Record<string, unknown>)[key] = JSON.parse(v);
+            a[key] = JSON.parse(v);
           } catch {
             // leave as-is; execute() will surface a clear error if shape is wrong
           }
         }
       }
-      return args as Record<string, unknown>;
+      // A single plain file path string (not JSON) counts as one input file.
+      if (typeof a.input_files === "string" && a.input_files.trim().length > 0) {
+        a.input_files = [a.input_files];
+      }
+      return a;
     },
     parameters: {
       prompt: { type: "string", description: "The positive prompt describing what you want to see." },
-      negative_prompt: { type: "optional", description: "What you want to avoid in the generation." },
-      workflow: { type: "optional", description: "The workflow file to use (e.g., 'Anime.json'). Call paint_list_workflows to browse, then paint_get_details for that workflow's variables and notes." },
+      negative_prompt: { type: "optional", valueType: "string", description: "What you want to avoid in the generation." },
+      workflow: { type: "optional", valueType: "string", description: "The workflow file to use (e.g., 'Anime.json'). Call paint_list_workflows to browse, then paint_get_details for that workflow's variables and notes." },
       variables: { type: "optional", description: "Custom variables for the workflow (e.g., {'Width': 1024, 'Height': 1024, 'Seed': 12345}). See paint_get_details for available keys." },
       input_files: { type: "optional", description: "Local image file paths to upload into [FILE:type:order] workflow slots, in slot order. Relative paths are resolved from the current project directory." },
       loras: { type: "optional", description: "Optional LoRA overrides for [LORA:slot] Power Lora Loader slots. Preferred shape: {'base_style': {file:'...', strength:0.7}} or {'base_style': [{file:'...', strength:0.7}, ...]}. Overrides replace the contents of that slot. Slot names come from paint_get_details (LoRA slots); valid 'file' values come from paint_get_models (LoRA category) or the 'Usable LoRA metadata' in paint_get_details. Use POSIX path separators (forward slash '/'). If a LoRA has an activationPrompt in its metadata, add it to 'prompt' yourself — it is not added automatically. Omitted strength defaults to the sidecar's defaultStrength, else 0.7." },
@@ -70,10 +120,12 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
     async execute(params, signal, onUpdate?: OnUpdate) {
       let promptId: string | undefined;
       try {
+        const startTime = Date.now();
         // 1. Resolve workflow
         const wfPath = resolveWorkflowPath(
           config.workflowDir,
           params?.workflow as string | undefined,
+          config.bundledWorkflowDir,
         );
         const wfRaw = loadWorkflowJson(wfPath);
         if (!wfRaw) {
@@ -83,6 +135,17 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
         // 2. Parse workflow details
         const details = parseWorkflowDetails(wfRaw);
         const loraMetadata = loadLoraMetadata(wfPath);
+
+        // 2.5 Warn when the workflow has [FILE:type:order] slots but fewer input_files
+        //     were provided than slots exist. Uncovered slots silently fall back to
+        //     their node defaults, which often surprises users into thinking their
+        //     prompt was used as text-to-image.
+        const warnings: string[] = [];
+        const fileSlots = Object.entries(details.fileNodes)
+          .map(([order, info]) => ({ order: Number(order), ...info }))
+          .sort((a, b) => a.order - b.order);
+        const fileSlotWarning = collectFileSlotWarnings(wfRaw, params?.input_files, fileSlots);
+        if (fileSlotWarning) warnings.push(fileSlotWarning);
 
         // 3. Deep clone the workflow and apply variables
         const promptWf = JSON.parse(JSON.stringify(wfRaw)) as Record<string, unknown>;
@@ -131,11 +194,17 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
 
         // 6. Upload and map input files into [FILE:type:order] slots
         const uploadedInputs: UploadedInput[] = [];
-        const inputFiles = params?.input_files as string[] | undefined;
+        const rawInputFiles = params?.input_files;
+        if (
+          rawInputFiles != null &&
+          (!Array.isArray(rawInputFiles) ||
+            rawInputFiles.some((file) => typeof file !== "string"))
+        ) {
+          throw new Error("input_files must be an array of local file path strings.");
+        }
+        const inputFiles = rawInputFiles as string[] | undefined;
         if (inputFiles?.length) {
-          const slots = Object.entries(details.fileNodes)
-            .map(([order, info]) => ({ order: Number(order), ...info }))
-            .sort((a, b) => a.order - b.order);
+          const slots = fileSlots;
 
           if (slots.length === 0) {
             throw new Error(
@@ -173,12 +242,47 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
         onUpdate?.({ content: [{ type: "text", text: "Queuing prompt on ComfyUI…" }] });
         promptId = await queuePrompt(config.serverAddress, promptWf, config.clientId, signal);
 
-        const history = await pollHistory(config.serverAddress, promptId, signal);
+        const history = await pollHistory(
+          config.serverAddress,
+          promptId,
+          signal,
+          600_000,
+          1000,
+          (elapsedMs) => {
+            onUpdate?.({
+              content: [
+                {
+                  type: "text",
+                  text: `Waiting for ComfyUI… ${Math.round(elapsedMs / 1000)}s elapsed`,
+                },
+              ],
+            });
+          },
+        );
         const promptHistory = history[promptId];
+
+        // Surface ComfyUI execution failures instead of reporting "no outputs".
+        const executionError = extractExecutionError(history, promptId);
+        if (executionError) {
+          return {
+            content: [
+              { type: "text", text: `ComfyUI generation failed: ${executionError}` },
+            ],
+            details: {
+              promptId,
+              error: executionError,
+              ...(warnings.length > 0 ? { warnings } : {}),
+            },
+          };
+        }
+
         if (!promptHistory || !promptHistory.outputs) {
           return {
             content: [{ type: "text", text: "Generation completed but no outputs found." }],
-            details: {},
+            details: {
+              promptId,
+              ...(warnings.length > 0 ? { warnings } : {}),
+            },
           };
         }
 
@@ -242,12 +346,40 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
                 text: "No images were generated. Check the prompt or workflow variables.",
               },
             ],
-            details: {},
+            details: {
+              promptId,
+              workflow: path.basename(wfPath),
+              ...(warnings.length > 0 ? { warnings } : {}),
+            },
           };
         }
 
         const fileList = results.map((r) => r.path).join("\n");
-        const textContent = `Generated ${results.length} file(s):\n${fileList}`;
+        // Generation wall time — stops before image compression / writing to disk.
+        const generationElapsedMs = Date.now() - startTime;
+        const elapsedText =
+          generationElapsedMs >= 1000
+            ? `${(generationElapsedMs / 1000).toFixed(1)}s`
+            : `${generationElapsedMs}ms`;
+        // Mark bundled-sourced workflows so a same-named project/bundled pair is
+        // distinguishable in the output.
+        const wfName = path.basename(wfPath);
+        const bundledMarker =
+          config.bundledWorkflowDir &&
+          path.resolve(path.dirname(wfPath)) === path.resolve(config.bundledWorkflowDir)
+            ? " (bundled)"
+            : "";
+        const textParts: string[] = [];
+        for (const warning of warnings) {
+          textParts.push(`⚠️ ${warning}`);
+        }
+        textParts.push(
+          `Generated ${results.length} file(s):`,
+          fileList,
+          `Workflow: ${wfName}${bundledMarker}`,
+          `⏱️ Generation time: ${elapsedText}`,
+        );
+        const textContent = textParts.join("\n");
 
         const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
           { type: "text", text: textContent },
@@ -291,6 +423,10 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
               mimeType: r.mimeType,
             })),
             promptId,
+            workflow: path.basename(wfPath),
+            workflowPath: wfPath,
+            generationElapsedMs,
+            ...(warnings.length > 0 ? { warnings } : {}),
             uploadedInputs,
             appliedLoras: appliedLoras.applied,
           },

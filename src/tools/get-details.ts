@@ -27,11 +27,15 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
       "Use paint_get_details before calling paint with an unfamiliar workflow to learn its variables, prompt style, LoRA slots, and input requirements.",
     ],
     parameters: {
-      workflow: { type: "optional", description: "The name of the workflow file to inspect (e.g., 'SDXL_example.json'). If omitted, uses the first available workflow." },
+      workflow: { type: "optional", valueType: "string", description: "The name of the workflow file to inspect (e.g., 'SDXL_example.json'). If omitted, uses the first available workflow." },
     },
     async execute(params) {
       try {
-        const wfPath = resolveWorkflowPath(config.workflowDir, params?.workflow as string | undefined);
+        const wfPath = resolveWorkflowPath(
+          config.workflowDir,
+          params?.workflow as string | undefined,
+          config.bundledWorkflowDir,
+        );
         const wf = loadWorkflowJson(wfPath);
         if (!wf) {
           return {

@@ -26,6 +26,12 @@ function intFromEnv(name: string, fallback: number): number {
   return isNaN(parsed) ? fallback : parsed;
 }
 
+/** intFromEnv with a lower bound (and optional upper bound). */
+function clampedIntFromEnv(name: string, fallback: number, min: number, max?: number): number {
+  const parsed = intFromEnv(name, fallback);
+  return max === undefined ? Math.max(parsed, min) : Math.min(Math.max(parsed, min), max);
+}
+
 /** Normalize COMFYUI_URL to a base URL. Bare host:port values keep working as http://host:port. */
 export function normalizeComfyUrl(raw: string | undefined): string {
   const value = (raw ?? DEFAULT_COMFYUI_URL).trim();
@@ -61,7 +67,7 @@ export function getConfig(cwd: string): PaintConfig {
     bundledWorkflowDir,
     clientId: `pi-paint-${Math.random().toString(36).slice(2, 10)}`,
     interruptOnAbort: envFlag("COMFYUI_INTERRUPT_ON_ABORT"),
-    imageQuality: intFromEnv("COMFYUI_IMAGE_QUALITY", 85),
-    imageMaxDimension: intFromEnv("COMFYUI_IMAGE_MAX_DIMENSION", 2048),
+    imageQuality: clampedIntFromEnv("COMFYUI_IMAGE_QUALITY", 85, 0, 100),
+    imageMaxDimension: clampedIntFromEnv("COMFYUI_IMAGE_MAX_DIMENSION", 2048, 0),
   };
 }

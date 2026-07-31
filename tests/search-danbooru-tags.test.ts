@@ -29,6 +29,34 @@ describe("categoryName", () => {
   });
 });
 
+describe("createSearchDanbooruTagsTool prepareArguments", () => {
+  const config = {} as PaintConfig;
+
+  it("passes an array of queries through unchanged", () => {
+    const tool = createSearchDanbooruTagsTool(config);
+    const out = tool.prepareArguments!({ queries: ["smile", "blonde hair"] });
+    expect(out.queries).toEqual(["smile", "blonde hair"]);
+  });
+
+  it("parses a JSON-string queries array", () => {
+    const tool = createSearchDanbooruTagsTool(config);
+    const out = tool.prepareArguments!({ queries: '["smile", "blonde hair"]' });
+    expect(out.queries).toEqual(["smile", "blonde hair"]);
+  });
+
+  it("wraps a single plain-string query into an array", () => {
+    const tool = createSearchDanbooruTagsTool(config);
+    const out = tool.prepareArguments!({ queries: "smile" });
+    expect(out.queries).toEqual(["smile"]);
+  });
+
+  it("ignores non-string queries", () => {
+    const tool = createSearchDanbooruTagsTool(config);
+    const out = tool.prepareArguments!({ queries: 42 });
+    expect(out.queries).toBe(42);
+  });
+});
+
 describe("Danbooru URL builders", () => {
   it("builds wildcard tag search URLs", () => {
     const url = new URL(buildTagSearchUrl("light smile", 8));

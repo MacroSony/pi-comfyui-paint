@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { normalizeComfyUrl } from "./config.js";
 import type {
   ComfyUIQueueResult,
   ComfyUIHistoryOutput,
@@ -14,11 +15,7 @@ import type {
 // ─── Generic fetch ───────────────────────────────────────────────────────────
 
 export function buildComfyUrl(server: string, endpoint: string): string {
-  const trimmed = server.trim();
-  const withProtocol = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed)
-    ? trimmed
-    : `http://${trimmed}`;
-  const base = withProtocol.replace(/\/+$/, "");
+  const base = normalizeComfyUrl(server);
   const suffix = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
   return `${base}${suffix}`;
 }
@@ -60,8 +57,11 @@ export async function pollHistory(
   signal?: AbortSignal,
   maxWaitMs = 600_000,
   pollIntervalMs = 1000,
+  onProgress?: (elapsedMs: number) => void,
+  progressIntervalMs = 10_000,
 ): Promise<ComfyUIHistoryOutput> {
   const start = Date.now();
+  let lastProgress = 0;
   while (Date.now() - start < maxWaitMs) {
     if (signal?.aborted) {
       throw new Error("Paint cancelled");
@@ -71,6 +71,13 @@ export async function pollHistory(
     if (history[promptId]) {
       return history;
     }
+
+    const elapsed = Date.now() - start;
+    if (onProgress && elapsed - lastProgress >= progressIntervalMs) {
+      lastProgress = elapsed;
+      onProgress(elapsed);
+    }
+
     await abortableSleep(pollIntervalMs, signal);
   }
   throw new Error(`Timeout waiting for ComfyUI prompt ${promptId} after ${maxWaitMs}ms`);
@@ -83,6 +90,64 @@ export async function interruptComfy(server: string): Promise<void> {
   if (!res.ok) {
     throw new Error(`ComfyUI /interrupt returned ${res.status}: ${await res.text()}`);
   }
+}
+
+// ─── Execution errors ────────────────────────────────────────────────────────
+
+/**
+ * Extract the execution error from a finished history entry, if the prompt failed.
+ * ComfyUI marks failed prompts with status.status_str === "error" and stores an
+ * "execution_error" message carrying exception details.
+ */
+export function extractExecutionError(
+  history: ComfyUIHistoryOutput,
+  promptId: string,
+): string | undefined {
+  const entry = history[promptId];
+  const status = entry?.status;
+  if (!status || status.status_str !== "error") return undefined;
+
+  const messages = Array.isArray(status.messages) ? status.messages : [];
+  for (const message of messages) {
+    if (!Array.isArray(message) || message[0] !== "execution_error") continue;
+    const data = (message[1] ?? {}) as Record<string, unknown>;
+    const exceptionType =
+      typeof data.exception_type === "string" ? data.exception_type : undefined;
+    const exceptionMessage =
+      typeof data.exception_message === "string" ? data.exception_message : undefined;
+    const nodeType = typeof data.node_type === "string" ? data.node_type : undefined;
+
+    const detail = [exceptionType, exceptionMessage].filter(Boolean).join(": ");
+    const base = detail.length > 0 ? detail : "Unknown execution error";
+    return nodeType ? `${base} (in node ${nodeType})` : base;
+  }
+
+  return "Unknown execution error";
+}
+
+// ─── Object info (cached) ────────────────────────────────────────────────────
+
+let objectInfoCache:
+  | { server: string; at: number; data: Record<string, unknown> }
+  | undefined;
+const OBJECT_INFO_TTL_MS = 60_000;
+
+/**
+ * Fetch ComfyUI /object_info with a short-lived per-server cache.
+ * Multiple tools query it; avoid re-fetching a potentially large response
+ * when several are called in the same flow.
+ */
+export async function getObjectInfo(server: string): Promise<Record<string, unknown>> {
+  if (
+    objectInfoCache &&
+    objectInfoCache.server === server &&
+    Date.now() - objectInfoCache.at < OBJECT_INFO_TTL_MS
+  ) {
+    return objectInfoCache.data;
+  }
+  const data = (await comfyFetch(server, "/object_info")) as Record<string, unknown>;
+  objectInfoCache = { server, at: Date.now(), data };
+  return data;
 }
 
 // ─── Upload ──────────────────────────────────────────────────────────────────

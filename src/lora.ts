@@ -10,7 +10,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { comfyFetch } from "./comfyui-client.js";
+import { getObjectInfo } from "./comfyui-client.js";
 import type { LoraMetadata, LoraOverride, LoraSlot, LoraSlotItem } from "./types.js";
 
 const LORA_TITLE_RE = /^\[LORA:([^\]]+)\]/i;
@@ -111,7 +111,7 @@ export function metadataByFile(metadata: LoraMetadata[]): Record<string, LoraMet
 
 /** Query ComfyUI object_info for installed LoRA names. */
 export async function getInstalledLoras(serverAddress: string): Promise<string[]> {
-  const info = (await comfyFetch(serverAddress, "/object_info")) as Record<
+  const info = (await getObjectInfo(serverAddress)) as Record<
     string,
     { input?: { required?: Record<string, [Array<unknown>, Record<string, unknown>?]> } }
   >;

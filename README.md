@@ -13,13 +13,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.1.0
+pi install npm:pi-comfyui-paint@0.1.1
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.1.0
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.1.1
 ```
 
 ## Configuration
@@ -29,8 +29,9 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.1.0
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
 | `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
 | `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to call ComfyUI `/interrupt` when a `paint` tool call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI may continue running. |
-| `COMFYUI_IMAGE_QUALITY` | `85` | JPEG quality (1–100) for images sent to the LLM provider. Set to `0` to send raw PNG with no compression. Original files on disk are never modified. |
-| `COMFYUI_IMAGE_MAX_DIMENSION` | `2048` | Resize images so the longest side ≤ this many pixels before sending to the LLM. Set to `0` to skip resizing. Original files on disk are never modified. |
+| `COMFYUI_IMAGE_QUALITY` | `85` | JPEG quality (0–100) for images sent to the LLM provider; out-of-range values are clamped. Set to `0` to send raw PNG with no compression. Original files on disk are never modified. |
+| `COMFYUI_IMAGE_MAX_DIMENSION` | `2048` | Resize images so the longest side ≤ this many pixels before sending to the LLM (clamped to ≥ 0). Set to `0` to skip resizing. Original files on disk are never modified. |
+| `PI_PAINT_INLINE` | (auto) | Controls inline display of generated images/videos in the pi TUI. Set to `0` to disable inline display. On Windows, inline display is off by default; set to `1` to force it on. |
 
 ## Workflow Resolution
 
@@ -38,23 +39,23 @@ Workflows are resolved in this order:
 
 1. `COMFYUI_WORKFLOW_DIR` env var (if set)
 2. `.pi/comfyui_workflows/` in your project root
-3. `workflows/` bundled with this package (fallback)
+3. `workflows/` bundled with this package (per-file fallback)
 
-Place your own `.json` workflow files in any of these locations. To customize the bundled workflows, call `paint_copy_workflow_to_project` first and edit the copied files in `.pi/comfyui_workflows/`.
+Resolution is **per file**: a workflow name is first looked up in the active directory, then falls back to the bundled directory. This means bundled workflows (`T2I_Anime_Anima.json`, `I2I_General_QwenImageEdit.json`, …) are usable **by name directly** — no copy step required. A same-named file in the project directory always wins.
+
+Place your own `.json` workflow files in any of these locations. To customize a bundled workflow, copy the `.json` (and its `*.loras.json` sidecar, if any) into `.pi/comfyui_workflows/` and edit the copy.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `paint_list_workflows` | List available workflow JSON files |
-| `paint_get_details` | Inspect a workflow's variables and notes |
+| `paint_list_workflows` | List available workflow JSON files with a one-line summary each (variables, file slots, LoRA slots, outputs) |
+| `paint_get_details` | Inspect a workflow's variables, notes, outputs, file slots, and LoRA metadata |
 | `paint_validate_workflow` | Validate a workflow's JSON structure and pi-comfyui-paint annotations |
-| `paint_copy_workflow_to_project` | Copy bundled workflows into `.pi/comfyui_workflows/` for project customization |
-| `paint_server_status` | Check ComfyUI connectivity and effective extension configuration |
+| `paint_server_status` | Check ComfyUI connectivity, effective extension configuration, and the current queue state |
 | `paint_get_models` | Query ComfyUI server for available models (checkpoints, LoRAs, etc.) |
-| `paint_queue_status` | Check the current generation queue (running + pending) |
 | `paint_interrupt` | Cancel the currently running generation |
-| `paint` | Generate images/videos from a prompt, with optional workflow variables and input files |
+| `paint` | Generate images/videos from a prompt, with optional workflow variables, input files, and LoRA overrides |
 | `paint_search_danbooru_tags` | Search Danbooru to confirm tags and find related tags (supports multiple queries) |
 
 `paint_search_danbooru_tags` defaults to wildcard tag-name search. Pass `mode: "related"` to use Danbooru's related-tag endpoint for tags that commonly appear with a tag or search; optional related-mode parameters include `categories`, `order`, `search_sample_size`, and `tag_sample_size`. The tool warns when an input is not exact Danbooru tag spelling, and reports Danbooru request failures separately from successful empty results.

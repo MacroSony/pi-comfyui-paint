@@ -93,8 +93,15 @@ export interface ComfyUIOutputItem {
   type: string;
 }
 
+export interface ComfyUIHistoryStatus {
+  status_str?: string;
+  completed?: boolean;
+  messages?: unknown[];
+}
+
 export interface ComfyUIHistoryOutput {
   [promptId: string]: {
+    status?: ComfyUIHistoryStatus;
     outputs: Record<string, Record<string, ComfyUIOutputItem[]>>;
   };
 }

@@ -2,6 +2,8 @@
  * Tests for workflow module — parsing, validation, and path resolution.
  */
 
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
@@ -65,10 +67,105 @@ describe("resolveWorkflowPath", () => {
     );
   });
 
-  it("throws when directory has no json files", () => {
-    expect(() => resolveWorkflowPath("/tmp", undefined)).toThrow(
-      "No default workflow found",
+  it("falls back to the bundled workflow when the active dir misses it", () => {
+    const bundledDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-bundled-"));
+    fs.writeFileSync(path.join(bundledDir, "BundledOnly.json"), "{}");
+    try {
+      const p = resolveWorkflowPath(FIXTURES, "BundledOnly", bundledDir);
+      expect(p).toBe(path.join(bundledDir, "BundledOnly.json"));
+    } finally {
+      fs.rmSync(bundledDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fall back when the bundled dir has no matching workflow", () => {
+    const bundledDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-bundled-"));
+    try {
+      expect(() => resolveWorkflowPath(FIXTURES, "nonexistent", bundledDir)).toThrow(
+        "Workflow not found: nonexistent.json",
+      );
+    } finally {
+      fs.rmSync(bundledDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the bundled dir for the default pick when active dir is empty", () => {
+    const activeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-active-"));
+    const bundledDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-bundled-"));
+    fs.writeFileSync(path.join(bundledDir, "BundledDefault.json"), "{}");
+    try {
+      const p = resolveWorkflowPath(activeDir, undefined, bundledDir);
+      expect(p).toBe(path.join(bundledDir, "BundledDefault.json"));
+    } finally {
+      fs.rmSync(activeDir, { recursive: true, force: true });
+      fs.rmSync(bundledDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fall back when the bundled dir is the active dir", () => {
+    expect(() => resolveWorkflowPath(FIXTURES, "nonexistent", FIXTURES)).toThrow(
+      "Workflow not found: nonexistent.json",
     );
+  });
+
+  it("prefers the active dir when both dirs have a same-named workflow", () => {
+    const activeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-active-"));
+    const bundledDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-bundled-"));
+    fs.writeFileSync(path.join(activeDir, "SameName.json"), "{\"active\":true}");
+    fs.writeFileSync(path.join(bundledDir, "SameName.json"), "{\"bundled\":true}");
+    try {
+      const p = resolveWorkflowPath(activeDir, "SameName", bundledDir);
+      expect(p).toBe(path.join(activeDir, "SameName.json"));
+    } finally {
+      fs.rmSync(activeDir, { recursive: true, force: true });
+      fs.rmSync(bundledDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not fall back for absolute-path inputs", () => {
+    const bundledDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-bundled-"));
+    fs.writeFileSync(path.join(bundledDir, "AbsPath.json"), "{}");
+    try {
+      // Absolute path to a file that does NOT exist — must not resolve into the bundled dir.
+      expect(() =>
+        resolveWorkflowPath(FIXTURES, "/nonexistent/AbsPath.json", bundledDir),
+      ).toThrow("Workflow not found");
+    } finally {
+      fs.rmSync(bundledDir, { recursive: true, force: true });
+    }
+  });
+
+  it("throws when directory has no json files", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-test-"));
+    try {
+      expect(() => resolveWorkflowPath(dir, undefined)).toThrow(
+        "No default workflow found",
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves an absolute path without .json extension to the .json file", () => {
+    const p = resolveWorkflowPath(FIXTURES, path.join(FIXTURES, "minimal-workflow"));
+    expect(p).toBe(path.join(FIXTURES, "minimal-workflow.json"));
+  });
+
+  it("resolves a bare absolute path whose file has no .json extension", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-test-"));
+    const bare = path.join(dir, "myworkflow");
+    fs.writeFileSync(bare, "{}");
+    try {
+      const p = resolveWorkflowPath(dir, bare);
+      expect(p).toBe(bare);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves an absolute path with .json extension", () => {
+    const p = resolveWorkflowPath(FIXTURES, path.join(FIXTURES, "minimal-workflow.json"));
+    expect(p).toBe(path.join(FIXTURES, "minimal-workflow.json"));
   });
 });
 

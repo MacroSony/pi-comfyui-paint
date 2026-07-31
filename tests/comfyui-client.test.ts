@@ -8,7 +8,10 @@ import {
   resolveInputFilePath,
   pickFileInputKey,
   abortableSleep,
+  extractExecutionError,
+  pollHistory,
 } from "../src/comfyui-client.js";
+import type { ComfyUIHistoryOutput } from "../src/types.js";
 
 // ─── buildComfyUrl ──────────────────────────────────────────────────────────
 
@@ -130,5 +133,100 @@ describe("abortableSleep", () => {
     vi.advanceTimersByTime(1000);
     await promise; // should resolve
     controller.abort(); // should not throw
+  });
+});
+
+// ─── extractExecutionError ───────────────────────────────────────────────────
+
+describe("extractExecutionError", () => {
+  it("returns undefined for missing history entry", () => {
+    expect(extractExecutionError({}, "abc")).toBeUndefined();
+  });
+
+  it("returns undefined for a successful run", () => {
+    const history: ComfyUIHistoryOutput = {
+      abc: {
+        status: { status_str: "success", completed: true, messages: [] },
+        outputs: {},
+      },
+    };
+    expect(extractExecutionError(history, "abc")).toBeUndefined();
+  });
+
+  it("extracts exception details from execution_error message", () => {
+    const history: ComfyUIHistoryOutput = {
+      abc: {
+        status: {
+          status_str: "error",
+          completed: false,
+          messages: [
+            ["execution_error", {
+              node_type: "KSampler",
+              exception_type: "ValueError",
+              exception_message: "steps must be positive",
+            }],
+          ],
+        },
+        outputs: {},
+      },
+    };
+    expect(extractExecutionError(history, "abc")).toBe(
+      "ValueError: steps must be positive (in node KSampler)",
+    );
+  });
+
+  it("falls back to a generic message when details are missing", () => {
+    const history: ComfyUIHistoryOutput = {
+      abc: {
+        status: { status_str: "error", completed: false, messages: [] },
+        outputs: {},
+      },
+    };
+    expect(extractExecutionError(history, "abc")).toBe("Unknown execution error");
+  });
+});
+
+// ─── pollHistory ─────────────────────────────────────────────────────────────
+
+describe("pollHistory", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("polls until the prompt appears in history", async () => {
+    let polls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        polls += 1;
+        return {
+          ok: true,
+          json: async () => (polls >= 3 ? { abc: { outputs: {} } } : {}),
+        };
+      }),
+    );
+
+    const history = await pollHistory("http://comfy.test", "abc", undefined, 5000, 1);
+    expect(history["abc"]).toBeDefined();
+    expect(polls).toBe(3);
+  });
+
+  it("reports progress via onProgress callback", async () => {
+    let polls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        polls += 1;
+        return {
+          ok: true,
+          json: async () => (polls >= 2 ? { abc: { outputs: {} } } : {}),
+        };
+      }),
+    );
+
+    const elapsed: number[] = [];
+    await pollHistory("http://comfy.test", "abc", undefined, 5000, 1, (ms) => elapsed.push(ms), 0);
+    expect(elapsed.length).toBeGreaterThan(0);
+    expect(elapsed.every((ms) => ms >= 0)).toBe(true);
   });
 });

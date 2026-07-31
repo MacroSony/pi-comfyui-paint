@@ -7,6 +7,13 @@ import type { OnUpdate } from "../types.js";
 export interface ToolParamDef {
   type: string;
   description: string;
+  /**
+   * For type: "optional", the JSON type the value should have when present.
+   * Defaults to "unknown". Use this to keep the public schema strict for
+   * simple params while leaving genuinely polymorphic params (objects,
+   * JSON-string values) loose.
+   */
+  valueType?: "string" | "number" | "boolean" | "array" | "unknown";
 }
 
 export interface ToolParams {

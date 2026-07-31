@@ -31,11 +31,21 @@ export function loadWorkflowJson(workflowPath: string): Record<string, unknown> 
  * When no name is given, the first .json file in the directory is used.
  * Throws if no matching workflow is found.
  */
-export function resolveWorkflowPath(workflowDir: string, workflowName?: string): string {
+export function resolveWorkflowPath(
+  workflowDir: string,
+  workflowName?: string,
+  bundledDir?: string,
+): string {
   if (!workflowName) {
     if (fs.existsSync(workflowDir)) {
       const files = fs.readdirSync(workflowDir).filter(isWorkflowJsonFile);
       if (files.length > 0) return path.join(workflowDir, files[0]);
+    }
+    // Empty/absent active dir: fall back to the bundled directory so a fresh
+    // project can still generate with zero setup.
+    if (bundledDir && !sameDir(bundledDir, workflowDir) && fs.existsSync(bundledDir)) {
+      const files = fs.readdirSync(bundledDir).filter(isWorkflowJsonFile);
+      if (files.length > 0) return path.join(bundledDir, files[0]);
     }
     throw new Error("No default workflow found and no workflow specified.");
   }
@@ -43,9 +53,30 @@ export function resolveWorkflowPath(workflowDir: string, workflowName?: string):
   const name = workflowName.endsWith(".json") ? workflowName : `${workflowName}.json`;
   const direct = path.join(workflowDir, name);
   if (fs.existsSync(direct)) return direct;
-  // Try as absolute path
+  // Try as absolute path (with .json extension)
   if (fs.existsSync(name)) return name;
-  throw new Error(`Workflow not found: ${name} (looked in ${workflowDir})`);
+  // Try as absolute path without extension (bare file)
+  if (!workflowName.endsWith(".json") && fs.existsSync(workflowName)) return workflowName;
+  // Bundled fallback: same-name workflow in the bundled directory loads directly,
+  // so bundled workflows are usable by name without copying them first.
+  if (
+    bundledDir &&
+    !path.isAbsolute(name) &&
+    !sameDir(bundledDir, workflowDir)
+  ) {
+    const bundledCandidate = path.join(bundledDir, name);
+    if (fs.existsSync(bundledCandidate)) return bundledCandidate;
+  }
+  throw new Error(
+    `Workflow not found: ${name} (looked in ${workflowDir}` +
+      (bundledDir && !sameDir(bundledDir, workflowDir) ? ` and bundled ${bundledDir}` : "") +
+      "); absolute paths are also accepted",
+  );
+}
+
+/** True when two directory paths point at the same location (normalized compare). */
+function sameDir(a: string, b: string): boolean {
+  return path.resolve(a) === path.resolve(b);
 }
 
 // ─── Parsing ─────────────────────────────────────────────────────────────────

@@ -156,6 +156,30 @@ describe("getConfig", () => {
     expect(config.imageMaxDimension).toBe(0);
   });
 
+  it("clamps COMFYUI_IMAGE_QUALITY above 100 to 100", async () => {
+    process.env.COMFYUI_IMAGE_QUALITY = "500";
+    const { getConfig } = await import("../src/config.js");
+    expect(getConfig("/tmp/test").imageQuality).toBe(100);
+  });
+
+  it("clamps negative COMFYUI_IMAGE_QUALITY to 0", async () => {
+    process.env.COMFYUI_IMAGE_QUALITY = "-10";
+    const { getConfig } = await import("../src/config.js");
+    expect(getConfig("/tmp/test").imageQuality).toBe(0);
+  });
+
+  it("clamps negative COMFYUI_IMAGE_MAX_DIMENSION to 0", async () => {
+    process.env.COMFYUI_IMAGE_MAX_DIMENSION = "-2048";
+    const { getConfig } = await import("../src/config.js");
+    expect(getConfig("/tmp/test").imageMaxDimension).toBe(0);
+  });
+
+  it("falls back to default for non-numeric quality", async () => {
+    process.env.COMFYUI_IMAGE_QUALITY = "abc";
+    const { getConfig } = await import("../src/config.js");
+    expect(getConfig("/tmp/test").imageQuality).toBe(85);
+  });
+
   it("respects COMFYUI_WORKFLOW_DIR if set", async () => {
     process.env.COMFYUI_WORKFLOW_DIR = "/custom/workflows";
     const { getConfig } = await import("../src/config.js");

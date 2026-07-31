@@ -6,7 +6,10 @@ import * as path from "node:path";
 import { resolveWorkflowPath, loadWorkflowJson, parseWorkflowDetails, validateWorkflow } from "../workflow.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
-export function createValidateWorkflowTool(workflowDir: string): ToolRegistration {
+export function createValidateWorkflowTool(
+  workflowDir: string,
+  bundledWorkflowDir?: string,
+): ToolRegistration {
   return {
     name: "paint_validate_workflow",
     label: "Paint Validate Workflow",
@@ -18,11 +21,15 @@ export function createValidateWorkflowTool(workflowDir: string): ToolRegistratio
       "Use paint_validate_workflow when a paint generation fails or before using a custom workflow to check for annotation errors.",
     ],
     parameters: {
-      workflow: { type: "optional", description: "The workflow file to validate. If omitted, validates the first available workflow." },
+      workflow: { type: "optional", valueType: "string", description: "The workflow file to validate. If omitted, validates the first available workflow." },
     },
     async execute(params) {
       try {
-        const wfPath = resolveWorkflowPath(workflowDir, params?.workflow as string | undefined);
+        const wfPath = resolveWorkflowPath(
+          workflowDir,
+          params?.workflow as string | undefined,
+          bundledWorkflowDir,
+        );
         const wf = loadWorkflowJson(wfPath);
         if (!wf) {
           return {

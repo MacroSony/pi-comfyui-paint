@@ -2,7 +2,7 @@
  * paint_get_models tool.
  */
 
-import { comfyFetch } from "../comfyui-client.js";
+import { getObjectInfo } from "../comfyui-client.js";
 import type { PaintConfig } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
@@ -40,7 +40,7 @@ export function createGetModelsTool(config: PaintConfig): ToolRegistration {
     parameters: {},
     async execute() {
       try {
-        const info = (await comfyFetch(config.serverAddress, "/object_info")) as Record<
+        const info = (await getObjectInfo(config.serverAddress)) as Record<
           string,
           {
             input?: {

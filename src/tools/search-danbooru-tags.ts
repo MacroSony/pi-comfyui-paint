@@ -373,6 +373,7 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
       },
       mode: {
         type: "optional",
+        valueType: "string",
         description: "Search mode: 'name' or 'search' for wildcard tag-name search (default), or 'related' for Danbooru related-tag search.",
       },
       categories: {
@@ -381,6 +382,7 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
       },
       order: {
         type: "optional",
+        valueType: "string",
         description: "Related mode only. Sort order: 'frequency' (default), 'cosine', 'jaccard', or 'overlap'.",
       },
       search_sample_size: {
@@ -391,6 +393,26 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
         type: "optional",
         description: "Related mode only. Number of candidate tags Danbooru should sample.",
       },
+    },
+    prepareArguments(args) {
+      // Some models send array params as JSON strings; also accept a single
+      // plain-string query by wrapping it into a one-element array.
+      if (!args || typeof args !== "object") return args as Record<string, unknown>;
+      const a = args as Record<string, unknown>;
+      const queries = a.queries;
+      if (typeof queries === "string" && queries.trim().length > 0) {
+        const trimmed = queries.trim();
+        let parsed: unknown = null;
+        if (trimmed.startsWith("[")) {
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch {
+            parsed = null;
+          }
+        }
+        a.queries = Array.isArray(parsed) ? parsed : [trimmed];
+      }
+      return a;
     },
     async execute(params) {
       const queries = Array.isArray(params?.queries)
