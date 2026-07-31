@@ -13,13 +13,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.1.1
+pi install npm:pi-comfyui-paint@0.1.2
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.1.1
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.1.2
 ```
 
 ## Configuration

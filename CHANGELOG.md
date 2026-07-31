@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.1]
+## [Unreleased]
 
 ### Added
 
@@ -52,3 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   priority, empty-dir default, absolute-path guard) and
   `collectFileSlotWarnings` boundary cases (partial coverage, non-array input,
   non-string defaults, upload widget key).
+
+## [0.1.1] - 2026-06-28
+
+### Fixed
+
+- LoRA overrides were dropped when models send object params as JSON strings.
+  `prepareArguments` now parses JSON-string `variables` / `loras` /
+  `input_files` back into objects before `execute()`.
