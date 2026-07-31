@@ -87,6 +87,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
       "Use paint_server_status before paint to check the ComfyUI queue and avoid piling up redundant requests if it is busy.",
       "Use paint_interrupt to cancel a running generation if the user changes their mind.",
       "If paint_get_details reports LoRA slots or usable LoRA metadata, pass `loras` overrides using those slot names, copy any activationPrompt into `prompt`, and use `paint_get_models` to confirm valid `file` names. Use forward slashes in paths.",
+      "Custom workflows: write your own ComfyUI API-format workflow JSON into .pi/comfyui_workflows/ and reference it by name. [VAR]/[OUTPUT]/[FILE]/[LORA] annotations are optional — an unannotated workflow runs as-is (prompt/variables ignored, all output nodes downloaded). See the pi-comfyui-paint-custom-workflow skill for the full guide.",
     ],
     prepareArguments(args) {
       // Some models (Opus 4.6, GLM-5.1) send object/array params as JSON strings instead
