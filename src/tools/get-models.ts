@@ -32,7 +32,7 @@ export function createGetModelsTool(config: PaintConfig): ToolRegistration {
       "Query the ComfyUI server for available models. " +
       "Returns models grouped by category (Checkpoints, LoRAs, VAEs, ControlNets, etc.). " +
       "Use this to discover what models are installed before generating images, " +
-      "so you can reference specific model names in prompts or recommend workflows.",
+      "so you can reference exact model names in paint variables or LoRA overrides, and recommend matching workflows.",
     promptSnippet: "Query ComfyUI for available models (checkpoints, LoRAs, VAEs, etc.)",
     promptGuidelines: [
       "Use paint_get_models to discover installed models before recommending a workflow or selecting a model name for paint variables.",

@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
+  isWorkflowJsonFile,
   loadWorkflowJson,
   resolveWorkflowPath,
   parseWorkflowDetails,
@@ -308,4 +309,29 @@ describe("validateWorkflow", () => {
     const result = validateWorkflow(wf);
     expect(result.errors).toHaveLength(0);
   });
+});
+
+// ─── Bundled workflows ───────────────────────────────────────────────────────
+
+describe("bundled workflows", () => {
+  const bundledDir = path.join(__dirname, "..", "workflows");
+  const files = fs.readdirSync(bundledDir).filter(isWorkflowJsonFile);
+
+  it("ships at least one bundled workflow", () => {
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  for (const file of files) {
+    it(`${file} parses, has a PositivePrompt var and an output, and validates without errors`, () => {
+      const wf = loadWorkflowJson(path.join(bundledDir, file));
+      expect(wf).not.toBeNull();
+      const details = parseWorkflowDetails(wf!);
+      // Bundled workflows are the out-of-the-box experience: prompt injection
+      // and a tagged output must both be present.
+      expect(details.rawVars).toHaveProperty("PositivePrompt");
+      expect(Object.keys(details.outputTypes).length).toBeGreaterThan(0);
+      const result = validateWorkflow(wf!);
+      expect(result.errors).toEqual([]);
+    });
+  }
 });

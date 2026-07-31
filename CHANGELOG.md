@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-31
+
 ### Added
 
+- New bundled skill `pi-comfyui-paint-custom-workflow` (registered via
+  `pi.skills` in `package.json`): a guide for writing and running custom
+  ComfyUI API-format workflow JSONs through `paint` — the annotation
+  reference, the write → validate → inspect → generate loop, a hires-fix
+  walkthrough, and debugging tips. Referenced from `paint`'s prompt
+  guidelines and the README.
+- New bundled workflow `T2I_Anime_Anima_hires.json`: two-pass hires fix
+  (~1 MP → ~2 MP) for Anima with `[VAR]` Seed1/Seed2/UpscaleWidth/
+  UpscaleHeight/Denoise2 knobs and a `[LORA:base_style]` slot; usable by
+  name with no copy step.
+- Tests now guard every bundled workflow: parses, exposes
+  `[VAR]PositivePrompt`, has a tagged output, and validates without errors.
 - Bundled workflows are now usable **by name** via per-file fallback in
   `resolveWorkflowPath`: a same-named file in the project directory always wins,
   an empty/absent active directory falls back to the bundled default pick, and
@@ -32,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `COMFYUI_IMAGE_QUALITY` and `COMFYUI_IMAGE_MAX_DIMENSION` values are clamped
   to valid ranges; `PI_PAINT_INLINE` is documented.
 
+### Fixed
+
+- `paint_interrupt` description, prompt snippet, and result text no longer
+  claim the queue is cleared — ComfyUI `/interrupt` cancels only the
+  running task; pending queue items stay queued.
+- `paint_get_models` description no longer suggests model names go in
+  prompts; they are referenced via `paint` variables and LoRA overrides.
+
 ### Removed
 
 - `paint_queue_status` — fully covered by `paint_server_status`, which already
@@ -48,10 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 19 new tests (129 total): bundled-fallback resolution (incl. same-name
-  priority, empty-dir default, absolute-path guard) and
+- 23 new tests (133 total): bundled-fallback resolution (incl. same-name
+  priority, empty-dir default, absolute-path guard),
   `collectFileSlotWarnings` boundary cases (partial coverage, non-array input,
-  non-string defaults, upload widget key).
+  non-string defaults, upload widget key), and a guard that every bundled
+  workflow parses, exposes `[VAR]PositivePrompt`, has a tagged output, and
+  validates without errors.
 
 ## [0.1.1] - 2026-06-28
 

@@ -13,13 +13,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.1.2
+pi install npm:pi-comfyui-paint@0.2.0
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.1.2
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.2.0
 ```
 
 ## Configuration
@@ -41,7 +41,7 @@ Workflows are resolved in this order:
 2. `.pi/comfyui_workflows/` in your project root
 3. `workflows/` bundled with this package (per-file fallback)
 
-Resolution is **per file**: a workflow name is first looked up in the active directory, then falls back to the bundled directory. This means bundled workflows (`T2I_Anime_Anima.json`, `I2I_General_QwenImageEdit.json`, …) are usable **by name directly** — no copy step required. A same-named file in the project directory always wins.
+Resolution is **per file**: a workflow name is first looked up in the active directory, then falls back to the bundled directory. This means bundled workflows (`T2I_Anime_Anima.json`, `T2I_Anime_Anima_hires.json`, `I2I_General_QwenImageEdit.json`, …) are usable **by name directly** — no copy step required. A same-named file in the project directory always wins.
 
 Place your own `.json` workflow files in any of these locations. To customize a bundled workflow, copy the `.json` (and its `*.loras.json` sidecar, if any) into `.pi/comfyui_workflows/` and edit the copy.
 
@@ -61,6 +61,10 @@ Place your own `.json` workflow files in any of these locations. To customize a 
 `paint_search_danbooru_tags` defaults to wildcard tag-name search. Pass `mode: "related"` to use Danbooru's related-tag endpoint for tags that commonly appear with a tag or search; optional related-mode parameters include `categories`, `order`, `search_sample_size`, and `tag_sample_size`. The tool warns when an input is not exact Danbooru tag spelling, and reports Danbooru request failures separately from successful empty results.
 
 If your environment uses `HTTP_PROXY` or `HTTPS_PROXY` for outbound access, Node may require `NODE_USE_ENV_PROXY=1` for Danbooru requests to use those proxy settings.
+
+## Skills
+
+This package ships the `pi-comfyui-paint-custom-workflow` skill. It teaches the agent how to write and run custom ComfyUI API-format workflow JSONs through `paint`: the `[VAR]` / `[OUTPUT]` / `[FILE]` / `[LORA]` annotation system, the write → validate (`paint_validate_workflow`) → inspect (`paint_get_details`) → generate loop, a two-pass hires-fix walkthrough (bundled as `T2I_Anime_Anima_hires.json`), and debugging tips. The skill loads on demand when you ask the agent to build or tweak a custom workflow — no setup needed.
 
 ## ComfyUI Custom Node Dependencies
 

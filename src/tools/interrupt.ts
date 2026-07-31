@@ -13,10 +13,10 @@ export function createInterruptTool(config: PaintConfig): ToolRegistration {
     description:
       "Interrupt the currently running ComfyUI generation. " +
       "Use this when the user wants to cancel an in-progress image generation. " +
-      "After interrupting, the queue is cleared and you can submit a new prompt.",
-    promptSnippet: "Cancel the currently running ComfyUI generation and clear the queue",
+      "Note: this cancels only the currently running task — pending queue items stay queued (check paint_server_status for queue state).",
+    promptSnippet: "Cancel the currently running ComfyUI generation",
     promptGuidelines: [
-      "Use paint_interrupt when the user wants to cancel an in-progress generation. After interrupting, a new paint call can be submitted.",
+      "Use paint_interrupt when the user wants to cancel an in-progress generation. It cancels only the running task; pending queue items remain queued. After interrupting, a new paint call can be submitted.",
     ],
     parameters: {},
     async execute() {
@@ -26,7 +26,7 @@ export function createInterruptTool(config: PaintConfig): ToolRegistration {
           content: [
             {
               type: "text",
-              text: "Interrupted. Current generation cancelled and queue cleared.",
+              text: "Interrupted. Current generation cancelled (pending queue items are not cleared).",
             },
           ],
           details: { interrupted: true },

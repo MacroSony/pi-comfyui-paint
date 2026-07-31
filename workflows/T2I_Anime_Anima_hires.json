@@ -1,0 +1,348 @@
+{
+  "46": {
+    "inputs": {
+      "filename_prefix": "Anima_hires",
+      "images": [
+        "88",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "[OUTPUT:image] Save Image"
+    }
+  },
+  "61": {
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "62": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "63": {
+    "inputs": {
+      "samples": [
+        "66",
+        0
+      ],
+      "vae": [
+        "62",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode (pass 1)"
+    }
+  },
+  "64": {
+    "inputs": {
+      "width": [
+        "69",
+        0
+      ],
+      "height": [
+        "71",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "65": {
+    "inputs": {
+      "text": [
+        "74",
+        0
+      ],
+      "clip": [
+        "78",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "66": {
+    "inputs": {
+      "seed": [
+        "80",
+        0
+      ],
+      "steps": 30,
+      "cfg": 4,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "78",
+        0
+      ],
+      "positive": [
+        "67",
+        0
+      ],
+      "negative": [
+        "65",
+        0
+      ],
+      "latent_image": [
+        "64",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler (pass 1, full denoise at base resolution)"
+    }
+  },
+  "67": {
+    "inputs": {
+      "text": [
+        "73",
+        0
+      ],
+      "clip": [
+        "78",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "68": {
+    "inputs": {
+      "unet_name": "anima_baseV10.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "69": {
+    "inputs": {
+      "value": 832
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]Width"
+    }
+  },
+  "71": {
+    "inputs": {
+      "value": 1216
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]Height"
+    }
+  },
+  "73": {
+    "inputs": {
+      "value": "masterpiece, best quality, score_7, safe, anime, 1girl, zhu yuan,zenless zone zero"
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "[VAR]PositivePrompt"
+    }
+  },
+  "74": {
+    "inputs": {
+      "value": "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia"
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "[VAR]NegativePrompt"
+    }
+  },
+  "77": {
+    "inputs": {
+      "value": "**Model:** Anima (anima_baseV10.safetensors). Trained on Danbooru tags, natural language captions, and tag+caption combinations.\n\n**Tag format:** Use lowercase with spaces (not underscores). Score tags are the only tags using underscores.\n\n**Recommended positive prefix:** masterpiece, best quality, score_7, safe, \n**Recommended negative:** worst quality, low quality, score_1, score_2, score_3, artist name\n\n**Tag order:** [quality/meta/year/safety tags] [1girl/1boy/etc] [character] [series] [artist] [general tags]\n\n**Quality tags (use either or both):** masterpiece, best quality, good quality, normal quality, low quality, worst quality — and/or — score_9 through score_1.\n\n**Time period:** year 2025, year 2024, ..., newest, recent, mid, early, old\n**Meta:** highres, absurdres, anime screenshot, jpeg artifacts, official art\n**Safety:** safe, sensitive, nsfw, explicit\n\n**Artists:** Prefix with @ (e.g. @big chungus). Required — effect is weak without @.\n\n**Prompt weighting** works but needs higher weight than typical SDXL (e.g. (chibi:2)).\n\n**Full example:** year 2025, newest, normal quality, score_5, highres, safe, 1girl, oomuro sakurako, yuru yuri, @nnn yryr, smile, brown hair, hat, solo, long hair, open mouth, looking at viewer, white background, simple background\n\n**Image With Text:** Anima is able to generate image with decent qualitied text with prompts like 'holding sign above head with red painted text \"Hello!\"'\n\n**Hires fix (two-pass):** Pass 1 renders at Width×Height (~1 MP). The result is pixel-upscaled (lanczos) to UpscaleWidth×UpscaleHeight (~2 MP), re-encoded to latent space, and pass 2 re-samples at low Denoise2 to restore detail. Keep Denoise2 in 0.3–0.45 (higher drifts toward a redraw); Seed2 should differ from Seed1; keep sampler/scheduler identical across passes. Default upscale 1184×1728 matches the 832×1216 base aspect ratio — adjust both together."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "[NOTE]"
+    }
+  },
+  "78": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": false,
+        "lora": "None",
+        "strength": 0
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "68",
+        0
+      ],
+      "clip": [
+        "61",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "[LORA:base_style] Power Lora Loader (rgthree)"
+    }
+  },
+  "80": {
+    "inputs": {
+      "value": 971560318183724
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]Seed1"
+    }
+  },
+  "81": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": [
+        "82",
+        0
+      ],
+      "height": [
+        "83",
+        0
+      ],
+      "crop": "disabled",
+      "image": [
+        "63",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "Pixel upscale to 2MP"
+    }
+  },
+  "82": {
+    "inputs": {
+      "value": 1184
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]UpscaleWidth"
+    }
+  },
+  "83": {
+    "inputs": {
+      "value": 1728
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]UpscaleHeight"
+    }
+  },
+  "84": {
+    "inputs": {
+      "pixels": [
+        "81",
+        0
+      ],
+      "vae": [
+        "62",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode (upscaled image back to latent)"
+    }
+  },
+  "85": {
+    "inputs": {
+      "seed": [
+        "86",
+        0
+      ],
+      "steps": 30,
+      "cfg": 4,
+      "sampler_name": "er_sde",
+      "scheduler": "simple",
+      "denoise": [
+        "87",
+        0
+      ],
+      "model": [
+        "78",
+        0
+      ],
+      "positive": [
+        "67",
+        0
+      ],
+      "negative": [
+        "65",
+        0
+      ],
+      "latent_image": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler (pass 2, low denoise restores detail)"
+    }
+  },
+  "86": {
+    "inputs": {
+      "value": 123456789
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "[VAR]Seed2"
+    }
+  },
+  "87": {
+    "inputs": {
+      "value": 0.35
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "[VAR]Denoise2"
+    }
+  },
+  "88": {
+    "inputs": {
+      "samples": [
+        "85",
+        0
+      ],
+      "vae": [
+        "62",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode (pass 2)"
+    }
+  }
+}
