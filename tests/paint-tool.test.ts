@@ -2,9 +2,25 @@
  * Tests for the paint tool's argument preparation shim.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { createPaintTool, collectFileSlotWarnings } from "../src/tools/paint.js";
+import { queuePrompt, pollHistory, downloadOutput } from "../src/comfyui-client.js";
 import type { PaintConfig } from "../src/types.js";
+
+vi.mock("../src/comfyui-client.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/comfyui-client.js")>(
+    "../src/comfyui-client.js",
+  );
+  return {
+    ...actual,
+    queuePrompt: vi.fn(),
+    pollHistory: vi.fn(),
+    downloadOutput: vi.fn(),
+  };
+});
 
 const config: PaintConfig = {
   serverAddress: "http://127.0.0.1:8188",
@@ -115,5 +131,82 @@ describe("collectFileSlotWarnings", () => {
     const warning = collectFileSlotWarnings(wf, undefined, [slots[0]]);
     expect(warning).toContain("slot 1 → (no default)");
     expect(warning).not.toContain("→ image");
+  });
+});
+
+describe("createPaintTool generated media content", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns image and video outputs by path without embedding media bytes", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-paint-tool-test-"));
+    try {
+      const workflowDir = path.join(tmpDir, "workflows");
+      fs.mkdirSync(workflowDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(workflowDir, "test.json"),
+        JSON.stringify({
+          "1": {
+            class_type: "CLIPTextEncode",
+            inputs: { text: "" },
+            _meta: { title: "[VAR] PositivePrompt" },
+          },
+          "2": {
+            class_type: "SaveImage",
+            inputs: {},
+            _meta: { title: "[OUTPUT:any] Generated media" },
+          },
+        }),
+      );
+
+      vi.mocked(queuePrompt).mockResolvedValue("prompt-1");
+      vi.mocked(pollHistory).mockResolvedValue({
+        "prompt-1": {
+          status: { status_str: "success", completed: true, messages: [] },
+          outputs: {
+            "2": {
+              images: [
+                { filename: "image.png", subfolder: "", type: "output" },
+                { filename: "video.mp4", subfolder: "", type: "output" },
+              ],
+            },
+          },
+        },
+      });
+      vi.mocked(downloadOutput).mockResolvedValue([
+        {
+          data: Buffer.from("not really a png"),
+          filename: "image.png",
+          ext: "png",
+          mimeType: "image/png",
+        },
+        {
+          data: Buffer.from("not really an mp4"),
+          filename: "video.mp4",
+          ext: "mp4",
+          mimeType: "video/mp4",
+        },
+      ]);
+
+      const tool = createPaintTool({ ...config, workflowDir }, tmpDir);
+      const result = await tool.execute(
+        { prompt: "test", workflow: "test.json" },
+        new AbortController().signal,
+      );
+
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].type).toBe("text");
+      expect(result.content.every((item) => item.data === undefined)).toBe(true);
+
+      const files = result.details.files as Array<{ path: string; mimeType: string }>;
+      expect(files).toHaveLength(2);
+      expect(files.map((file) => file.mimeType)).toEqual(["image/png", "video/mp4"]);
+      for (const file of files) {
+        expect(fs.existsSync(file.path)).toBe(true);
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

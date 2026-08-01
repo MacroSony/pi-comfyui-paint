@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `paint` now returns generated image/video files by local path only and no
+  longer embeds generated media bytes in tool `content`. This avoids shipping
+  large base64 video payloads through pi's tool-result/UI/provider pipeline and
+  prevents hosts from attempting to decode video bytes as images. The removed
+  `PI_PAINT_INLINE` behavior is no longer applicable.
+
 ## [0.2.0] - 2026-07-31
 
 ### Added

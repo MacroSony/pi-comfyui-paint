@@ -7,8 +7,8 @@
  *   COMFYUI_URL                 - ComfyUI base URL (default: http://127.0.0.1:8188)
  *   COMFYUI_WORKFLOW_DIR        - Workflow JSON folder
  *   COMFYUI_INTERRUPT_ON_ABORT  - Interrupt ComfyUI when a pi paint tool call is cancelled
- *   COMFYUI_IMAGE_QUALITY       - JPEG quality for images sent to the LLM provider (1-100, default: 85).
- *   COMFYUI_IMAGE_MAX_DIMENSION - Resize images so the longest side ≤ pixels (default: 2048).
+ *   COMFYUI_IMAGE_QUALITY       - Reserved JPEG quality for optional future inline images (1-100, default: 85).
+ *   COMFYUI_IMAGE_MAX_DIMENSION - Reserved max dimension for optional future inline images (default: 2048).
  *
  * Registers 8 tools:
  *   paint_list_workflows  paint_get_details       paint_validate_workflow

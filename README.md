@@ -29,9 +29,8 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.2.0
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
 | `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
 | `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to call ComfyUI `/interrupt` when a `paint` tool call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI may continue running. |
-| `COMFYUI_IMAGE_QUALITY` | `85` | JPEG quality (0–100) for images sent to the LLM provider; out-of-range values are clamped. Set to `0` to send raw PNG with no compression. Original files on disk are never modified. |
-| `COMFYUI_IMAGE_MAX_DIMENSION` | `2048` | Resize images so the longest side ≤ this many pixels before sending to the LLM (clamped to ≥ 0). Set to `0` to skip resizing. Original files on disk are never modified. |
-| `PI_PAINT_INLINE` | (auto) | Controls inline display of generated images/videos in the pi TUI. Set to `0` to disable inline display. On Windows, inline display is off by default; set to `1` to force it on. |
+| `COMFYUI_IMAGE_QUALITY` | `85` | Reserved for optional future inline-image compression (1–100). Generated media is currently returned by path only; original files on disk are never modified. |
+| `COMFYUI_IMAGE_MAX_DIMENSION` | `2048` | Reserved for optional future inline-image resizing. Generated media is currently returned by path only. |
 
 ## Workflow Resolution
 

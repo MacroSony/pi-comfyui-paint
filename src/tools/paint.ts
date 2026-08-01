@@ -23,7 +23,6 @@ import {
   interruptComfy,
   extractExecutionError,
 } from "../comfyui-client.js";
-import { compressImageForLLM } from "../image-compression.js";
 import type { PaintConfig, GenerationResult, UploadedInput } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 import type { OnUpdate } from "../types.js";
@@ -386,34 +385,10 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           { type: "text", text: textContent },
         ];
 
-        // Inline TUI display logic
-        const noInline =
-          process.env.PI_PAINT_INLINE === "0" ||
-          (process.platform === "win32" && process.env.PI_PAINT_INLINE !== "1");
-
-        for (const r of results) {
-          if (r.mimeType.startsWith("image/")) {
-            const compressed = await compressImageForLLM(
-              r.data,
-              r.mimeType,
-              config.imageQuality,
-              config.imageMaxDimension,
-            );
-            content.push({
-              type: "image",
-              data: compressed.data,
-              mimeType: compressed.mimeType,
-            });
-          } else if (r.mimeType.startsWith("video/")) {
-            if (!noInline) {
-              content.push({
-                type: "image",
-                data: r.data.toString("base64"),
-                mimeType: r.mimeType,
-              });
-            }
-          }
-        }
+        // Generated media is intentionally returned by path only. Do not embed
+        // image/video bytes in tool content: large base64 payloads can exhaust
+        // pi/TUI/provider memory, and hosts may try to decode video bytes as
+        // images when an incompatible content type is used.
 
         return {
           content,
