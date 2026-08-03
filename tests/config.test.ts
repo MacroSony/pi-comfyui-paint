@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 // so we'll dynamic import within each test or use module-level setup.
 
 // Import the pure functions for testing
-import { envFlag, normalizeComfyUrl } from "../src/config.js";
+import { envFlag, normalizeComfyUrl, parseComfyBackends } from "../src/config.js";
 
 describe("envFlag", () => {
   it("returns true for '1'", () => {
@@ -80,16 +80,41 @@ describe("normalizeComfyUrl", () => {
   });
 });
 
+describe("parseComfyBackends", () => {
+  it("uses a default backend when the named list is unset", () => {
+    expect(parseComfyBackends(undefined, "comfy.test:8188")).toEqual([
+      { id: "default", url: "http://comfy.test:8188" },
+    ]);
+  });
+
+  it("parses named backends", () => {
+    expect(parseComfyBackends(
+      "gpu-a=http://gpu-a:8188,gpu-b=https://gpu-b.example",
+      undefined,
+    )).toEqual([
+      { id: "gpu-a", url: "http://gpu-a:8188" },
+      { id: "gpu-b", url: "https://gpu-b.example" },
+    ]);
+  });
+
+  it("rejects malformed and duplicate backend IDs", () => {
+    expect(() => parseComfyBackends("missing-url", undefined)).toThrow("Expected id=");
+    expect(() => parseComfyBackends("gpu=http://a,gpu=http://b", undefined)).toThrow("Duplicate");
+  });
+});
+
 describe("getConfig", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     // Reset relevant env vars
     delete process.env.COMFYUI_URL;
+    delete process.env.COMFYUI_BACKENDS;
     delete process.env.COMFYUI_WORKFLOW_DIR;
     delete process.env.COMFYUI_INTERRUPT_ON_ABORT;
     delete process.env.COMFYUI_OUTPUT_DIR;
     delete process.env.COMFYUI_OUTPUT_RETENTION_HOURS;
+    delete process.env.COMFYUI_SYNC_TIMEOUT_SECONDS;
     delete process.env.COMFYUI_INLINE_IMAGE_LIMIT;
     delete process.env.COMFYUI_IMAGE_QUALITY;
     delete process.env.COMFYUI_IMAGE_MAX_DIMENSION;
@@ -105,8 +130,10 @@ describe("getConfig", () => {
     const { getConfig } = await import("../src/config.js");
     const config = getConfig("/tmp/test-project");
     expect(config.serverAddress).toBe("http://127.0.0.1:8188");
+    expect(config.backends).toEqual([{ id: "default", url: "http://127.0.0.1:8188" }]);
     expect(config.interruptOnAbort).toBe(false);
     expect(config.outputRetentionHours).toBe(168);
+    expect(config.syncTimeoutMs).toBe(600_000);
     expect(config.outputDirIsDefault).toBe(true);
     expect(config.inlineImageLimit).toBe(1);
     expect(config.imageQuality).toBe(80);
@@ -129,6 +156,21 @@ describe("getConfig", () => {
     const { getConfig } = await import("../src/config.js");
     const config = getConfig("/tmp/test");
     expect(config.serverAddress).toBe("http://192.168.1.100:9199");
+  });
+
+  it("uses COMFYUI_BACKENDS in preference to COMFYUI_URL", async () => {
+    process.env.COMFYUI_URL = "http://ignored:8188";
+    process.env.COMFYUI_BACKENDS = "a=http://a:8188,b=http://b:8188";
+    const { getConfig } = await import("../src/config.js");
+    const config = getConfig("/tmp/test");
+    expect(config.backends.map((backend) => backend.id)).toEqual(["a", "b"]);
+    expect(config.serverAddress).toBe("http://a:8188");
+  });
+
+  it("configures the synchronous wait timeout", async () => {
+    process.env.COMFYUI_SYNC_TIMEOUT_SECONDS = "42";
+    const { getConfig } = await import("../src/config.js");
+    expect(getConfig("/tmp/test").syncTimeoutMs).toBe(42_000);
   });
 
   it("respects COMFYUI_INTERRUPT_ON_ABORT", async () => {

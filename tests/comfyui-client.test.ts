@@ -11,8 +11,11 @@ import {
   abortableSleep,
   extractExecutionError,
   pollHistory,
-  downloadOutput,
+  downloadOutputToFile,
 } from "../src/comfyui-client.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ComfyUIHistoryOutput } from "../src/types.js";
 
 // ─── buildComfyUrl ──────────────────────────────────────────────────────────
@@ -139,9 +142,11 @@ describe("abortableSleep", () => {
   });
 });
 
-describe("downloadOutput", () => {
+describe("downloadOutputToFile", () => {
+  const tempPaths: string[] = [];
   afterEach(() => {
     vi.unstubAllGlobals();
+    for (const target of tempPaths.splice(0)) fs.rmSync(target, { force: true });
   });
 
   it("passes the abort signal to output downloads", async () => {
@@ -152,18 +157,28 @@ describe("downloadOutput", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await downloadOutput("http://comfy.test", {
-      images: [{ filename: "x.png", subfolder: "", type: "output" }],
-    }, controller.signal);
+    const target = path.join(os.tmpdir(), `pi-paint-download-${Date.now()}-${Math.random()}`);
+    tempPaths.push(target);
+    await downloadOutputToFile(
+      "http://comfy.test",
+      { filename: "x.png", subfolder: "", type: "output" },
+      target,
+      controller.signal,
+    );
 
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ signal: controller.signal });
+    expect(fs.readFileSync(target, "utf-8")).toBe("image");
   });
 
   it("surfaces failed output downloads", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 404 })));
-    await expect(downloadOutput("http://comfy.test", {
-      images: [{ filename: "missing.png", subfolder: "", type: "output" }],
-    })).rejects.toThrow("/view failed for missing.png with 404");
+    const target = path.join(os.tmpdir(), `pi-paint-download-${Date.now()}-${Math.random()}`);
+    tempPaths.push(target);
+    await expect(downloadOutputToFile(
+      "http://comfy.test",
+      { filename: "missing.png", subfolder: "", type: "output" },
+      target,
+    )).rejects.toThrow("/view failed for missing.png with 404");
   });
 });
 

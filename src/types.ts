@@ -5,6 +5,9 @@
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 export interface PaintConfig {
+  /** Configured ComfyUI backends. The first entry is the compatibility default. */
+  backends: ComfyBackend[];
+  /** Compatibility alias for the first configured backend URL. */
   serverAddress: string;
   workflowDir: string;
   projectWorkflowDir: string;
@@ -12,6 +15,7 @@ export interface PaintConfig {
   outputDir: string;
   outputDirIsDefault: boolean;
   outputRetentionHours: number;
+  syncTimeoutMs: number;
   clientId: string;
   interruptOnAbort: boolean;
   /** Maximum number of generated images included as inline model previews. */
@@ -24,6 +28,19 @@ export interface PaintConfig {
   imageMaxBytes: number;
   /** Maximum base64-encoded bytes across all inline previews in one result. */
   imageTotalMaxBytes: number;
+}
+
+export interface ComfyBackend {
+  id: string;
+  url: string;
+}
+
+export interface BackendQueueSnapshot {
+  backend: ComfyBackend;
+  running: number;
+  pending: number;
+  reservations: number;
+  queue: ComfyUIQueueStatus;
 }
 
 // ─── Workflow ────────────────────────────────────────────────────────────────
@@ -90,6 +107,11 @@ export interface ComfyUIQueueResult {
   prompt_id: string;
 }
 
+export interface ComfyUIQueueStatus {
+  queue_running?: unknown[];
+  queue_pending?: unknown[];
+}
+
 export interface ComfyUIOutputItem {
   filename: string;
   subfolder: string;
@@ -113,13 +135,6 @@ export interface ComfyUIUploadResult {
   name: string;
   subfolder?: string;
   type?: string;
-}
-
-export interface DownloadedOutput {
-  data: Buffer;
-  filename: string;
-  ext: string;
-  mimeType: string;
 }
 
 // ─── Generation ──────────────────────────────────────────────────────────────
@@ -146,4 +161,51 @@ export interface UploadedInput {
   path: string;
   uploaded: ComfyUIUploadResult;
   key: string;
+}
+
+export type PaintJobState =
+  | "preparing"
+  | "submitting"
+  | "submitted"
+  | "queued"
+  | "running"
+  | "finalizing"
+  | "finalization_failed"
+  | "completed"
+  | "failed"
+  | "submission_unknown"
+  | "unknown"
+  | "cancelling"
+  | "cancelled";
+
+export interface PaintJobRecord {
+  version: 1;
+  id: string;
+  state: PaintJobState;
+  createdAt: string;
+  updatedAt: string;
+  terminalAt?: string;
+  backend: ComfyBackend;
+  clientId: string;
+  promptId?: string;
+  workflow: string;
+  workflowPath: string;
+  workflowHash: string;
+  workflowSnapshotPath: string;
+  outputDir: string;
+  outputNodeIds: string[];
+  prompt?: string;
+  negativePrompt?: string;
+  variables?: Record<string, unknown>;
+  loras?: unknown;
+  sourceInputPaths: string[];
+  uploadedInputs: UploadedInput[];
+  appliedLoras: unknown[];
+  warnings: string[];
+  files: GenerationResult[];
+  submittedAt?: string;
+  completedAt?: string;
+  generationElapsedMs?: number;
+  error?: string;
+  diagnostic?: string;
 }

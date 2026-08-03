@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { PaintConfig } from "./types.js";
+import type { ComfyBackend, PaintConfig } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,6 +20,8 @@ const DEFAULT_IMAGE_MAX_DIMENSION = 2000;
 const DEFAULT_IMAGE_MAX_BYTES = Math.floor(4.5 * 1024 * 1024);
 const DEFAULT_IMAGE_TOTAL_MAX_BYTES = 8 * 1024 * 1024;
 const DEFAULT_OUTPUT_RETENTION_HOURS = 7 * 24;
+const DEFAULT_SYNC_TIMEOUT_SECONDS = 10 * 60;
+const BACKEND_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** Parse a boolean env flag (accepts 1/true/yes/on). */
 export function envFlag(name: string): boolean {
@@ -55,6 +57,39 @@ export function normalizeComfyUrl(raw: string | undefined): string {
   return url.toString().replace(/\/+$/, "");
 }
 
+/** Parse `id=url,id=url` backend configuration, falling back to COMFYUI_URL. */
+export function parseComfyBackends(
+  rawBackends: string | undefined,
+  fallbackUrl: string | undefined,
+): ComfyBackend[] {
+  if (!rawBackends?.trim()) {
+    return [{ id: "default", url: normalizeComfyUrl(fallbackUrl) }];
+  }
+
+  const seen = new Set<string>();
+  return rawBackends.split(",").map((rawEntry) => {
+    const entry = rawEntry.trim();
+    const separator = entry.indexOf("=");
+    if (separator <= 0 || separator === entry.length - 1) {
+      throw new Error(
+        `Invalid COMFYUI_BACKENDS entry '${entry}'. Expected id=http://host:port.`,
+      );
+    }
+    const id = entry.slice(0, separator).trim();
+    const rawUrl = entry.slice(separator + 1).trim();
+    if (!BACKEND_ID_PATTERN.test(id)) {
+      throw new Error(
+        `Invalid ComfyUI backend ID '${id}'. Use letters, numbers, '.', '_' or '-'.`,
+      );
+    }
+    if (seen.has(id)) {
+      throw new Error(`Duplicate ComfyUI backend ID '${id}'.`);
+    }
+    seen.add(id);
+    return { id, url: normalizeComfyUrl(rawUrl) };
+  });
+}
+
 /** Build the PaintConfig for a given working directory. */
 export function getConfig(cwd: string): PaintConfig {
   // Package's own workflows dir as fallback
@@ -76,8 +111,14 @@ export function getConfig(cwd: string): PaintConfig {
         `pi-comfyui-paint-${typeof process.getuid === "function" ? process.getuid() : "user"}`,
       );
 
+  const backends = parseComfyBackends(
+    process.env.COMFYUI_BACKENDS,
+    process.env.COMFYUI_URL,
+  );
+
   return {
-    serverAddress: normalizeComfyUrl(process.env.COMFYUI_URL),
+    backends,
+    serverAddress: backends[0].url,
     workflowDir,
     projectWorkflowDir,
     bundledWorkflowDir,
@@ -88,6 +129,12 @@ export function getConfig(cwd: string): PaintConfig {
       DEFAULT_OUTPUT_RETENTION_HOURS,
       0,
     ),
+    syncTimeoutMs:
+      clampedIntFromEnv(
+        "COMFYUI_SYNC_TIMEOUT_SECONDS",
+        DEFAULT_SYNC_TIMEOUT_SECONDS,
+        1,
+      ) * 1000,
     clientId: `pi-paint-${Math.random().toString(36).slice(2, 10)}`,
     interruptOnAbort: envFlag("COMFYUI_INTERRUPT_ON_ABORT"),
     inlineImageLimit: clampedIntFromEnv(

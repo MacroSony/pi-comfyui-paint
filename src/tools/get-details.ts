@@ -3,6 +3,7 @@
  */
 
 import * as path from "node:path";
+import { getBackend } from "../backends.js";
 import { resolveWorkflowPath, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
 import {
   buildUsableLoras,
@@ -28,6 +29,7 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
     ],
     parameters: {
       workflow: { type: "optional", valueType: "string", description: "The name of the workflow file to inspect (e.g., 'SDXL_example.json'). If omitted, uses the first available workflow." },
+      backend: { type: "optional", valueType: "string", description: "Backend used for installed-LoRA checks. Defaults to the first backend." },
     },
     async execute(params, signal) {
       try {
@@ -45,10 +47,11 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
         }
         const details = parseWorkflowDetails(wf);
         const workflowName = path.basename(wfPath);
+        const backend = getBackend(config.backends, params?.backend as string | undefined);
         const loraMetadata = loadLoraMetadata(wfPath);
         let installedLoras: string[] | undefined;
         try {
-          installedLoras = await getInstalledLoras(config.serverAddress, signal);
+          installedLoras = await getInstalledLoras(backend.url, signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           installedLoras = undefined;
@@ -95,6 +98,7 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
           content: [{ type: "text", text: lines.join("\n") }],
           details: {
             workflow: workflowName,
+            backend,
             notes: details.notes,
             variables: details.variables,
             outputTypes: details.outputTypes,

@@ -8,7 +8,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import sharp from "sharp";
 import { createPaintTool, collectFileSlotWarnings } from "../src/tools/paint.js";
-import { queuePrompt, pollHistory, downloadOutput } from "../src/comfyui-client.js";
+import {
+  ComfyHttpError,
+  PollTimeoutError,
+  queuePrompt,
+  pollHistory,
+  downloadOutputsToDirectory,
+} from "../src/comfyui-client.js";
+import { reserveBackend } from "../src/backends.js";
+import { loadJob } from "../src/job-store.js";
+import { listJobs } from "../src/job-store.js";
 import type { PaintConfig } from "../src/types.js";
 
 vi.mock("../src/comfyui-client.js", async () => {
@@ -19,11 +28,20 @@ vi.mock("../src/comfyui-client.js", async () => {
     ...actual,
     queuePrompt: vi.fn(),
     pollHistory: vi.fn(),
-    downloadOutput: vi.fn(),
+    downloadOutputsToDirectory: vi.fn(),
+  };
+});
+
+vi.mock("../src/backends.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/backends.js")>("../src/backends.js");
+  return {
+    ...actual,
+    reserveBackend: vi.fn(),
   };
 });
 
 const config: PaintConfig = {
+  backends: [{ id: "default", url: "http://127.0.0.1:8188" }],
   serverAddress: "http://127.0.0.1:8188",
   workflowDir: "/tmp/wf",
   projectWorkflowDir: "/tmp/proj",
@@ -31,6 +49,7 @@ const config: PaintConfig = {
   outputDir: "/tmp/pi-comfyui-paint-tests",
   outputDirIsDefault: false,
   outputRetentionHours: 168,
+  syncTimeoutMs: 600_000,
   clientId: "test-client",
   interruptOnAbort: false,
   inlineImageLimit: 1,
@@ -150,6 +169,7 @@ describe("collectFileSlotWarnings", () => {
 describe("createPaintTool generated media content", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("returns originals by path, inlines only bounded image previews, and supports path-only mode", async () => {
@@ -195,20 +215,29 @@ describe("createPaintTool generated media content", () => {
           background: { r: 20, g: 40, b: 60 },
         },
       }).png().toBuffer();
-      vi.mocked(downloadOutput).mockResolvedValue([
-        {
-          data: validPng,
-          filename: "image.png",
-          ext: "png",
-          mimeType: "image/png",
+      vi.mocked(reserveBackend).mockImplementation(async () => ({
+        backend: config.backends[0],
+        snapshot: {
+          backend: config.backends[0],
+          running: 0,
+          pending: 0,
+          reservations: 0,
+          queue: {},
         },
-        {
-          data: Buffer.from("not really an mp4"),
-          filename: "video.mp4",
-          ext: "mp4",
-          mimeType: "video/mp4",
+        release: vi.fn(),
+      }));
+      vi.mocked(downloadOutputsToDirectory).mockImplementation(
+        async (_server, _outputs, outputDir) => {
+          const imagePath = path.join(outputDir, "paint_0.png");
+          const videoPath = path.join(outputDir, "paint_1.mp4");
+          fs.writeFileSync(imagePath, validPng);
+          fs.writeFileSync(videoPath, Buffer.from("not really an mp4"));
+          return [
+            { path: imagePath, filename: "paint_0.png", mimeType: "image/png" },
+            { path: videoPath, filename: "paint_1.mp4", mimeType: "video/mp4" },
+          ];
         },
-      ]);
+      );
 
       const tool = createPaintTool({
         ...config,
@@ -249,6 +278,62 @@ describe("createPaintTool generated media content", () => {
       expect(pathOnlyResult.content).toHaveLength(1);
       expect(pathOnlyResult.content[0].type).toBe("text");
       expect(pathOnlyResult.details.inlinePreviews).toEqual([]);
+
+      const pollsBeforeBackground = vi.mocked(pollHistory).mock.calls.length;
+      const backgroundResult = await tool.execute(
+        { prompt: "long video", workflow: "test.json", background: true },
+        new AbortController().signal,
+      );
+      expect(backgroundResult.content[0]).toMatchObject({ type: "text" });
+      expect((backgroundResult.content[0] as { text: string }).text).toContain(
+        "Queued background paint job",
+      );
+      expect(vi.mocked(pollHistory).mock.calls).toHaveLength(pollsBeforeBackground);
+      const backgroundJobId = backgroundResult.details.jobId as string;
+      expect(loadJob(path.join(tmpDir, "outputs"), backgroundJobId)).toMatchObject({
+        id: backgroundJobId,
+        state: "submitted",
+        promptId: "prompt-1",
+        backend: config.backends[0],
+      });
+
+      vi.mocked(queuePrompt).mockRejectedValueOnce(new Error("connection reset after POST"));
+      await expect(tool.execute(
+        { prompt: "ambiguous", workflow: "test.json", background: true },
+        new AbortController().signal,
+      )).rejects.toThrow("Paint error (job");
+      expect(listJobs(path.join(tmpDir, "outputs"))[0]).toMatchObject({
+        state: "submission_unknown",
+        error: "connection reset after POST",
+      });
+
+      vi.mocked(queuePrompt).mockRejectedValueOnce(
+        new ComfyHttpError("/prompt", 400, "invalid workflow"),
+      );
+      await expect(tool.execute(
+        { prompt: "invalid", workflow: "test.json", background: true },
+        new AbortController().signal,
+      )).rejects.toThrow("invalid workflow");
+      expect(listJobs(path.join(tmpDir, "outputs")).some((job) =>
+        job.state === "failed" && job.error?.includes("invalid workflow"),
+      )).toBe(true);
+
+      vi.mocked(pollHistory).mockRejectedValueOnce(new PollTimeoutError("prompt-1", 10));
+      vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(String(input));
+        const value = url.pathname.startsWith("/history/")
+          ? {}
+          : { queue_running: [], queue_pending: [[0, "prompt-1"]] };
+        return new Response(JSON.stringify(value), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }));
+      const timedOut = await tool.execute(
+        { prompt: "slow", workflow: "test.json" },
+        new AbortController().signal,
+      );
+      expect(timedOut.details).toMatchObject({ state: "queued", promptId: "prompt-1" });
+      expect(timedOut.details.jobId).toEqual(expect.any(String));
 
       await expect(tool.execute(
         { prompt: "test", workflow: "test.json", variables: "invalid" },

@@ -3,13 +3,18 @@
  */
 
 import * as fs from "node:fs";
+import { createWriteStream } from "node:fs";
 import * as path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { normalizeComfyUrl } from "./config.js";
 import type {
   ComfyUIQueueResult,
+  ComfyUIQueueStatus,
   ComfyUIHistoryOutput,
+  ComfyUIOutputItem,
   ComfyUIUploadResult,
-  DownloadedOutput,
+  GenerationResult,
 } from "./types.js";
 
 // ─── Generic fetch ───────────────────────────────────────────────────────────
@@ -20,6 +25,17 @@ export function buildComfyUrl(server: string, endpoint: string): string {
   return `${base}${suffix}`;
 }
 
+export class ComfyHttpError extends Error {
+  constructor(
+    public readonly endpoint: string,
+    public readonly status: number,
+    public readonly responseBody: string,
+  ) {
+    super(`ComfyUI ${endpoint} returned ${status}: ${responseBody}`);
+    this.name = "ComfyHttpError";
+  }
+}
+
 export async function comfyFetch(
   server: string,
   endpoint: string,
@@ -28,7 +44,7 @@ export async function comfyFetch(
   const url = buildComfyUrl(server, endpoint);
   const res = await fetch(url, options);
   if (!res.ok) {
-    throw new Error(`ComfyUI ${endpoint} returned ${res.status}: ${await res.text()}`);
+    throw new ComfyHttpError(endpoint, res.status, await res.text());
   }
   return res.json();
 }
@@ -48,6 +64,9 @@ export async function queuePrompt(
     body,
     signal,
   })) as ComfyUIQueueResult;
+  if (typeof result.prompt_id !== "string" || result.prompt_id.length === 0) {
+    throw new Error("ComfyUI /prompt returned no prompt_id");
+  }
   return result.prompt_id;
 }
 
@@ -80,15 +99,73 @@ export async function pollHistory(
 
     await abortableSleep(pollIntervalMs, signal);
   }
-  throw new Error(`Timeout waiting for ComfyUI prompt ${promptId} after ${maxWaitMs}ms`);
+  throw new PollTimeoutError(promptId, maxWaitMs);
+}
+
+export class PollTimeoutError extends Error {
+  constructor(
+    public readonly promptId: string,
+    public readonly maxWaitMs: number,
+  ) {
+    super(`Timeout waiting for ComfyUI prompt ${promptId} after ${maxWaitMs}ms`);
+    this.name = "PollTimeoutError";
+  }
 }
 
 // ─── Interrupt ───────────────────────────────────────────────────────────────
 
-export async function interruptComfy(server: string): Promise<void> {
-  const res = await fetch(buildComfyUrl(server, "/interrupt"), { method: "POST" });
+export async function interruptComfy(server: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(buildComfyUrl(server, "/interrupt"), { method: "POST", signal });
   if (!res.ok) {
     throw new Error(`ComfyUI /interrupt returned ${res.status}: ${await res.text()}`);
+  }
+}
+
+/**
+ * Cancel one exact prompt using ComfyUI's atomic jobs API.
+ *
+ * Returns undefined when the backend predates this API so callers can choose a
+ * safe legacy fallback. A false result means the API exists but the exact job
+ * was no longer cancellable.
+ */
+export async function cancelPromptAtomically(
+  server: string,
+  promptId: string,
+  signal?: AbortSignal,
+): Promise<boolean | undefined> {
+  const endpoint = `/api/jobs/${encodeURIComponent(promptId)}/cancel`;
+  const res = await fetch(buildComfyUrl(server, endpoint), { method: "POST", signal });
+  if (res.status === 404 || res.status === 405) return undefined;
+  if (!res.ok) {
+    throw new Error(`ComfyUI ${endpoint} returned ${res.status}: ${await res.text()}`);
+  }
+  const result = (await res.json()) as { cancelled?: unknown };
+  if (typeof result.cancelled !== "boolean") {
+    throw new Error(`ComfyUI ${endpoint} returned an invalid response`);
+  }
+  return result.cancelled;
+}
+
+export async function getQueueStatus(
+  server: string,
+  signal?: AbortSignal,
+): Promise<ComfyUIQueueStatus> {
+  return (await comfyFetch(server, "/queue", { signal })) as ComfyUIQueueStatus;
+}
+
+export async function deleteQueuedPrompt(
+  server: string,
+  promptId: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(buildComfyUrl(server, "/queue"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delete: [promptId] }),
+    signal,
+  });
+  if (!res.ok) {
+    throw new Error(`ComfyUI /queue returned ${res.status}: ${await res.text()}`);
   }
 }
 
@@ -191,54 +268,106 @@ export async function uploadInputFile(
 
 // ─── Download ────────────────────────────────────────────────────────────────
 
-export async function downloadOutput(
-  server: string,
-  nodeOutput: Record<string, Array<{ filename: string; subfolder: string; type: string }>>,
-  signal?: AbortSignal,
-): Promise<DownloadedOutput[]> {
-  if (signal?.aborted) {
-    throw signal.reason instanceof Error ? signal.reason : new Error("Operation aborted");
-  }
-  const results: DownloadedOutput[] = [];
+const MIME_BY_EXTENSION: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+};
 
+export function outputFileMetadata(filename: string): { ext: string; mimeType: string } {
+  const ext = path.extname(filename).replace(".", "").toLowerCase() || "bin";
+  return { ext, mimeType: MIME_BY_EXTENSION[ext] || "application/octet-stream" };
+}
+
+export function collectOutputItems(
+  nodeOutput: Record<string, Array<ComfyUIOutputItem>>,
+): ComfyUIOutputItem[] {
+  const items: ComfyUIOutputItem[] = [];
   for (const value of Object.values(nodeOutput)) {
     if (!Array.isArray(value)) continue;
     for (const item of value) {
       if (!item.filename || item.subfolder == null || !item.type) continue;
-
-      const params = new URLSearchParams({
-        filename: item.filename,
-        subfolder: item.subfolder,
-        type: item.type,
-      });
-      const res = await fetch(buildComfyUrl(server, `/view?${params}`), { signal });
-      if (!res.ok) {
-        throw new Error(
-          `ComfyUI /view failed for ${item.filename} with ${res.status}: ${await res.text()}`,
-        );
-      }
-
-      const buf = Buffer.from(await res.arrayBuffer());
-      const ext = path.extname(item.filename).replace(".", "").toLowerCase() || "png";
-      const mimeMap: Record<string, string> = {
-        png: "image/png",
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        webp: "image/webp",
-        gif: "image/gif",
-        mp4: "video/mp4",
-        webm: "video/webm",
-        mov: "video/quicktime",
-      };
-      results.push({
-        data: buf,
-        filename: item.filename,
-        ext,
-        mimeType: mimeMap[ext] || "application/octet-stream",
-      });
+      items.push(item);
     }
   }
+  return items;
+}
 
+/** Stream one ComfyUI output directly to a private local file. */
+export async function downloadOutputToFile(
+  server: string,
+  item: ComfyUIOutputItem,
+  filePath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error("Operation aborted");
+  }
+  const params = new URLSearchParams({
+    filename: item.filename,
+    subfolder: item.subfolder,
+    type: item.type,
+  });
+  const res = await fetch(buildComfyUrl(server, `/view?${params}`), { signal });
+  if (!res.ok) {
+    throw new Error(
+      `ComfyUI /view failed for ${item.filename} with ${res.status}: ${await res.text()}`,
+    );
+  }
+  if (!res.body) throw new Error(`ComfyUI /view returned an empty body for ${item.filename}`);
+
+  const temporaryPath = `${filePath}.${process.pid}.${Math.random().toString(36).slice(2)}.part`;
+  try {
+    await pipeline(
+      Readable.fromWeb(
+        res.body as unknown as import("node:stream/web").ReadableStream,
+      ),
+      createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }),
+      { signal },
+    );
+    fs.chmodSync(temporaryPath, 0o600);
+    if (fs.existsSync(filePath)) {
+      fs.rmSync(temporaryPath, { force: true });
+    } else {
+      fs.renameSync(temporaryPath, filePath);
+    }
+    fs.chmodSync(filePath, 0o600);
+  } catch (error) {
+    try {
+      fs.rmSync(temporaryPath, { force: true });
+    } catch {
+      // Preserve the download error.
+    }
+    throw error;
+  }
+}
+
+/** Stream every output item into a job output directory. */
+export async function downloadOutputsToDirectory(
+  server: string,
+  nodeOutputs: Array<Record<string, Array<ComfyUIOutputItem>>>,
+  outputDir: string,
+  signal?: AbortSignal,
+): Promise<GenerationResult[]> {
+  const results: GenerationResult[] = [];
+  let counter = 0;
+  for (const nodeOutput of nodeOutputs) {
+    for (const item of collectOutputItems(nodeOutput)) {
+      const { ext, mimeType } = outputFileMetadata(item.filename);
+      const filename = `paint_${counter}.${ext}`;
+      const filePath = path.join(outputDir, filename);
+      if (!fs.existsSync(filePath)) {
+        await downloadOutputToFile(server, item, filePath, signal);
+      }
+      results.push({ path: filePath, filename, mimeType });
+      counter++;
+    }
+  }
   return results;
 }
 

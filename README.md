@@ -27,10 +27,12 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.2.0
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
+| `COMFYUI_BACKENDS` | (unset) | Named ComfyUI backends in `id=url,id=url` form. When set, this replaces `COMFYUI_URL` for generation and enables least-queued direct assignment. |
 | `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
-| `COMFYUI_OUTPUT_DIR` | `<temp>/pi-comfyui-paint-<user>` | Root for private, unique per-generation output folders. Relative paths are resolved from the project directory. Set this to a persistent location if results must survive temp cleanup. |
-| `COMFYUI_OUTPUT_RETENTION_HOURS` | `168` | Delete extension-managed generation folders older than this many hours when a new generation saves output. Set to `0` to disable extension cleanup. Unmarked folders are never removed. |
-| `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to call ComfyUI `/interrupt` when a `paint` tool call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI may continue running. |
+| `COMFYUI_OUTPUT_DIR` | `<temp>/pi-comfyui-paint-<user>` | Root for private job records and output folders. Relative paths are resolved from the project directory. Use a persistent location when job recovery must survive OS temp cleanup. |
+| `COMFYUI_OUTPUT_RETENTION_HOURS` | `168` | Delete terminal extension-managed jobs/outputs after this many hours. Active and uncertain jobs are retained. Set to `0` to disable extension cleanup. |
+| `COMFYUI_SYNC_TIMEOUT_SECONDS` | `600` | Maximum synchronous wait. On timeout, ComfyUI keeps running and `paint` returns a durable job ID instead of losing the generation. |
+| `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to attempt targeted job cancellation when a synchronous `paint` call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI continues running. |
 | `COMFYUI_INLINE_IMAGE_LIMIT` | `1` | Number of generated images returned to the model as inline previews. Clamped to 0–4; set to `0` for path-only results. |
 | `COMFYUI_IMAGE_QUALITY` | `80` | Initial JPEG quality for inline previews, clamped to 1–100. Quality and dimensions are reduced further when needed to meet byte limits. |
 | `COMFYUI_IMAGE_MAX_DIMENSION` | `2000` | Maximum width or height of an inline preview. |
@@ -39,7 +41,27 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.2.0
 
 Every generated original is returned by local path. Up to the configured number of image outputs are also returned as bounded JPEG previews so the agent can inspect them without another `read` call. Videos and other non-image outputs are path-only. Preview processing never modifies the originals and does not make an otherwise successful generation fail.
 
-The default output root is user-specific and private. Each generation uses a random subdirectory with user-only directory/file permissions where the platform supports POSIX modes. Paths are temporary by default; configure `COMFYUI_OUTPUT_DIR` for durable output.
+The default output root is user-specific and private. Each job uses a random subdirectory with user-only directory/file permissions where the platform supports POSIX modes. Paths are temporary by default; configure `COMFYUI_OUTPUT_DIR` for durable recovery across OS temp cleanup.
+
+## Background Jobs
+
+Pass `background: true` to `paint` for long generations such as H3 video workflows. The tool returns after ComfyUI accepts the prompt, including a durable `jobId` and the assigned backend. The accepted prompt lives in ComfyUI's native queue and continues if Pi exits.
+
+Use `paint_job_status` with the job ID to check progress. Once ComfyUI finishes, that tool streams outputs to private local files and returns bounded inline previews for images. Repeated status calls reuse already-downloaded files. `paint_job_cancel` uses ComfyUI's atomic per-job cancellation API when available. On older backends it can safely remove pending prompts, but it deliberately leaves running work alone because the legacy `/interrupt` endpoint is backend-wide; `paint_interrupt` remains the explicit escape hatch.
+
+Job recovery depends on the assigned ComfyUI backend retaining its queue/history and output files. Submission failures with an uncertain outcome are recorded but never retried automatically, preventing duplicate expensive generations.
+
+## Multiple Backends
+
+Configure named backends with:
+
+```bash
+COMFYUI_BACKENDS="gpu-a=http://gpu-a:8188,gpu-b=http://gpu-b:8188"
+```
+
+For each generation, the extension queries all native queues concurrently and directly submits to the reachable backend with the fewest running, pending, and locally-reserved submissions. Ties rotate within the Pi process. If every backend is busy, the job is still assigned immediately to the shortest native queue, so ComfyUI—not the Pi process—durably owns the wait.
+
+Automatic selection initially assumes the backends have compatible models, custom nodes, and workflows. Pass `backend: "gpu-a"` to `paint` to force one server. Backend-aware tools such as `paint_get_models`, `paint_get_details`, and `paint_interrupt` also accept a backend ID; `paint_interrupt` requires one when multiple backends are configured.
 
 ## Workflow Resolution
 
@@ -60,10 +82,12 @@ Place your own `.json` workflow files in any of these locations. To customize a 
 | `paint_list_workflows` | List available workflow JSON files with a one-line summary each (variables, file slots, LoRA slots, outputs) |
 | `paint_get_details` | Inspect a workflow's variables, notes, outputs, file slots, and LoRA metadata |
 | `paint_validate_workflow` | Validate a workflow's JSON structure and pi-comfyui-paint annotations |
-| `paint_server_status` | Check ComfyUI connectivity, effective extension configuration, and the current queue state |
-| `paint_get_models` | Query ComfyUI server for available models (checkpoints, LoRAs, etc.) |
-| `paint_interrupt` | Cancel the currently running generation |
-| `paint` | Generate images/videos from a prompt, with optional workflow variables, input files, and LoRA overrides |
+| `paint_server_status` | Check every configured backend, queue, durable jobs, and effective extension configuration |
+| `paint_get_models` | Query a selected ComfyUI backend for available models (checkpoints, LoRAs, etc.) |
+| `paint_interrupt` | Interrupt the current generation on a selected backend (backend-wide escape hatch) |
+| `paint` | Generate synchronously or submit a durable background job, with automatic or explicit backend selection |
+| `paint_job_status` | List recent durable jobs or reconcile one job and retrieve completed outputs |
+| `paint_job_cancel` | Target one recorded prompt for safe cancellation without interrupting unrelated work |
 | `paint_search_danbooru_tags` | Search Danbooru to confirm tags and find related tags (supports multiple queries) |
 
 `paint_search_danbooru_tags` defaults to wildcard tag-name search. Pass `mode: "related"` to use Danbooru's related-tag endpoint for tags that commonly appear with a tag or search; optional related-mode parameters include `categories`, `order`, `search_sample_size`, and `tag_sample_size`. The tool warns when an input is not exact Danbooru tag spelling, and reports Danbooru request failures separately from successful empty results.

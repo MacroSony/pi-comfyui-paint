@@ -46,12 +46,12 @@ function fitDimensions(
  * Throws when the bytes are not a decodable image or cannot be encoded.
  */
 export async function compressImageForLLM(
-  buffer: Buffer,
+  input: Buffer | string,
   quality: number,
   maxDimension: number,
   maxEncodedBytes: number,
 ): Promise<CompressedImagePreview> {
-  const metadata = await sharp(buffer, { animated: false }).metadata();
+  const metadata = await sharp(input, { animated: false }).metadata();
   const originalWidth = metadata.width;
   const originalHeight = metadata.height;
   const fitted = fitDimensions(originalWidth, originalHeight, Math.max(maxDimension, 1));
@@ -61,7 +61,7 @@ export async function compressImageForLLM(
 
   while (true) {
     for (const candidateQuality of qualitySteps(quality)) {
-      let pipeline = sharp(buffer, { animated: false }).rotate();
+      let pipeline = sharp(input, { animated: false }).rotate();
       if (width && height) {
         pipeline = pipeline.resize({
           width,

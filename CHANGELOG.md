@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the extension's ownership marker.
 - Optional `[FILE:type:order:optional]` workflow slots, which are disconnected
   when uncovered so one workflow can support text-to-video and image-guided modes.
+- Durable background jobs: `paint(background=true)` returns after prompt
+  acceptance, while `paint_job_status` recovers status/results after Pi restarts
+  and `paint_job_cancel` targets the recorded prompt.
+- Direct multi-backend assignment through `COMFYUI_BACKENDS=id=url,id=url`, with
+  least-queued selection, local submission reservations, round-robin ties, and
+  explicit backend overrides.
 - CI tests both the lockfile Pi API baseline and the latest published Pi API.
 
 ### Changed
@@ -29,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   used only as development and CI type-check baselines.
 - Inline preview defaults use conservative provider-safe limits:
   2000px longest side, JPEG quality 80, and 4.5 MiB encoded per image.
+- Synchronous generation now uses the durable job lifecycle. A wait timeout
+  returns a recoverable job ID while ComfyUI continues processing.
+- Output downloads stream directly to atomic private files instead of buffering
+  complete videos in process memory.
+- Job cancellation uses ComfyUI's atomic targeted endpoint when available.
+  Legacy backends can still remove pending prompts, but running jobs are not
+  subjected to a race-prone backend-wide interrupt.
 
 ### Fixed
 
@@ -41,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workflow directory is empty or missing.
 - `paint` rejects malformed `variables` and `loras` JSON values rather than
   silently ignoring them.
+- Retryable output-download failures no longer discard an otherwise completed
+  ComfyUI generation, and ambiguous submissions are never retried automatically.
 
 ### Security
 

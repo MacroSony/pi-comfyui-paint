@@ -3,6 +3,7 @@
  */
 
 import { getObjectInfo } from "../comfyui-client.js";
+import { getBackend } from "../backends.js";
 import type { PaintConfig } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
@@ -37,10 +38,13 @@ export function createGetModelsTool(config: PaintConfig): ToolRegistration {
     promptGuidelines: [
       "Use paint_get_models to discover installed models before recommending a workflow or selecting a model name for paint variables.",
     ],
-    parameters: {},
-    async execute(_params, signal) {
+    parameters: {
+      backend: { type: "optional", valueType: "string", description: "Configured backend ID. Defaults to the first backend." },
+    },
+    async execute(params, signal) {
       try {
-        const info = (await getObjectInfo(config.serverAddress, signal)) as Record<
+        const backend = getBackend(config.backends, params?.backend as string | undefined);
+        const info = (await getObjectInfo(backend.url, signal)) as Record<
           string,
           {
             input?: {
@@ -77,7 +81,10 @@ export function createGetModelsTool(config: PaintConfig): ToolRegistration {
           };
         }
 
-        const lines: string[] = ["**Available ComfyUI Models:**"];
+        const lines: string[] = [
+          "**Available ComfyUI Models:**",
+          `Backend: ${backend.id} (${backend.url})`,
+        ];
         for (const [category, names] of Object.entries(models)) {
           const sorted = [...new Set(names)].sort();
           lines.push(`\n**${category}:** ${sorted.join(", ")}`);
@@ -85,7 +92,7 @@ export function createGetModelsTool(config: PaintConfig): ToolRegistration {
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],
-          details: { models },
+          details: { backend, models },
         };
       } catch (e) {
         if (signal?.aborted) throw e;

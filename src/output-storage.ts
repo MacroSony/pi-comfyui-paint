@@ -10,9 +10,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const GENERATION_PREFIX = "generation-";
+const JOB_PREFIX = "job-";
 const OUTPUT_MARKER = ".pi-comfyui-paint-output";
+const TERMINAL_JOB_STATES = new Set(["completed", "failed", "cancelled"]);
 
-function ensureOutputRoot(outputRoot: string, managedRoot: boolean): void {
+export function ensureOutputRoot(outputRoot: string, managedRoot: boolean): void {
   if (!fs.existsSync(outputRoot)) {
     fs.mkdirSync(outputRoot, { recursive: true, mode: 0o700 });
     return;
@@ -42,13 +44,29 @@ export function cleanupExpiredOutputs(
   const removed: string[] = [];
 
   for (const entry of fs.readdirSync(outputRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith(GENERATION_PREFIX)) continue;
+    if (
+      !entry.isDirectory() ||
+      (!entry.name.startsWith(GENERATION_PREFIX) && !entry.name.startsWith(JOB_PREFIX))
+    ) continue;
 
     const candidate = path.join(outputRoot, entry.name);
     const marker = path.join(candidate, OUTPUT_MARKER);
     try {
       const markerStat = fs.lstatSync(marker);
-      if (!markerStat.isFile() || markerStat.mtimeMs >= cutoffMs) continue;
+      if (!markerStat.isFile()) continue;
+
+      let ageMs = markerStat.mtimeMs;
+      if (entry.name.startsWith(JOB_PREFIX)) {
+        const record = JSON.parse(
+          fs.readFileSync(path.join(candidate, "job.json"), "utf-8"),
+        ) as { state?: string; terminalAt?: string; updatedAt?: string };
+        if (!record.state || !TERMINAL_JOB_STATES.has(record.state)) continue;
+        const terminalMs = Date.parse(record.terminalAt ?? record.updatedAt ?? "");
+        if (!Number.isFinite(terminalMs)) continue;
+        ageMs = terminalMs;
+      }
+
+      if (ageMs >= cutoffMs) continue;
       fs.rmSync(candidate, { recursive: true, force: true });
       removed.push(candidate);
     } catch {
@@ -57,6 +75,31 @@ export function cleanupExpiredOutputs(
   }
 
   return removed;
+}
+
+/** Create a private directory for a durable job before it is submitted. */
+export function createJobOutputDir(
+  outputRoot: string,
+  jobId: string,
+  retentionHours: number,
+  managedRoot = false,
+): { jobDir: string; outputDir: string; removedExpired: string[] } {
+  if (!/^[A-Za-z0-9-]+$/.test(jobId)) {
+    throw new Error(`Invalid job ID: ${jobId}`);
+  }
+  ensureOutputRoot(outputRoot, managedRoot);
+  const removedExpired = cleanupExpiredOutputs(outputRoot, retentionHours);
+  const jobDir = path.join(outputRoot, `${JOB_PREFIX}${jobId}`);
+  fs.mkdirSync(jobDir, { mode: 0o700 });
+  fs.chmodSync(jobDir, 0o700);
+  const outputDir = path.join(jobDir, "outputs");
+  fs.mkdirSync(outputDir, { mode: 0o700 });
+  fs.writeFileSync(
+    path.join(jobDir, OUTPUT_MARKER),
+    JSON.stringify({ createdAt: new Date().toISOString(), kind: "job" }),
+    { encoding: "utf-8", mode: 0o600 },
+  );
+  return { jobDir, outputDir, removedExpired };
 }
 
 /** Create a private, unique directory for one generation. */

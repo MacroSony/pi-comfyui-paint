@@ -7,6 +7,8 @@ description: How to run hand-written / custom ComfyUI workflows through the pi-c
 
 The `paint` tool is not limited to the workflows it ships with. Any ComfyUI API-format workflow JSON placed in `.pi/comfyui_workflows/` can be referenced **by name**. **All annotations are optional** — an unannotated workflow runs as-is.
 
+For long video workflows, call `paint` with `background: true`, keep the returned job ID, and use `paint_job_status` later. Once ComfyUI accepts the prompt, its native queue continues processing even if the Pi session exits.
+
 ## ComfyUI API workflow JSON format
 
 ```json
