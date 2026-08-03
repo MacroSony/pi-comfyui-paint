@@ -14,6 +14,46 @@ export function isWorkflowJsonFile(file: string): boolean {
   return file.endsWith(".json") && !file.endsWith(".loras.json");
 }
 
+export interface AvailableWorkflowFile {
+  name: string;
+  path: string;
+  bundled: boolean;
+}
+
+/**
+ * List effective workflows using the same per-file shadowing rules as
+ * resolveWorkflowPath(). Active files come first; unshadowed bundled files
+ * follow and are marked as bundled.
+ */
+export function listAvailableWorkflowFiles(
+  workflowDir: string,
+  bundledDir?: string,
+): AvailableWorkflowFile[] {
+  const activeFiles = fs.existsSync(workflowDir)
+    ? fs.readdirSync(workflowDir).filter(isWorkflowJsonFile).sort()
+    : [];
+  const bundledFiles =
+    bundledDir && !sameDir(bundledDir, workflowDir) && fs.existsSync(bundledDir)
+      ? fs.readdirSync(bundledDir).filter(isWorkflowJsonFile).sort()
+      : [];
+  const activeNames = new Set(activeFiles);
+
+  return [
+    ...activeFiles.map((name) => ({
+      name,
+      path: path.join(workflowDir, name),
+      bundled: false,
+    })),
+    ...bundledFiles
+      .filter((name) => !activeNames.has(name))
+      .map((name) => ({
+        name,
+        path: path.join(bundledDir!, name),
+        bundled: true,
+      })),
+  ];
+}
+
 /** Load and parse a workflow JSON file. Returns null on failure. */
 export function loadWorkflowJson(workflowPath: string): Record<string, unknown> | null {
   try {
@@ -38,13 +78,13 @@ export function resolveWorkflowPath(
 ): string {
   if (!workflowName) {
     if (fs.existsSync(workflowDir)) {
-      const files = fs.readdirSync(workflowDir).filter(isWorkflowJsonFile);
+      const files = fs.readdirSync(workflowDir).filter(isWorkflowJsonFile).sort();
       if (files.length > 0) return path.join(workflowDir, files[0]);
     }
     // Empty/absent active dir: fall back to the bundled directory so a fresh
     // project can still generate with zero setup.
     if (bundledDir && !sameDir(bundledDir, workflowDir) && fs.existsSync(bundledDir)) {
-      const files = fs.readdirSync(bundledDir).filter(isWorkflowJsonFile);
+      const files = fs.readdirSync(bundledDir).filter(isWorkflowJsonFile).sort();
       if (files.length > 0) return path.join(bundledDir, files[0]);
     }
     throw new Error("No default workflow found and no workflow specified.");
@@ -88,7 +128,7 @@ function sameDir(a: string, b: string): boolean {
 export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflow {
   const rawVars: WorkflowVariables = {};
   const outputTypes: Record<string, string> = {};
-  const fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string }> = {};
+  const fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string; optional?: boolean }> = {};
   const notesParts: string[] = [];
   const loraSlots = parseLoraSlots(wf);
 
@@ -110,17 +150,19 @@ export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflo
       if (noteText) notesParts.push(noteText);
     } else {
       const outMatch = title.match(/^\[OUTPUT:([^\]]+)\]/i);
-      const fileMatch = title.match(/^\[FILE:([^:]+):(\d+)\]/i);
+      const fileMatch = title.match(/^\[FILE:([^:\]]+):(\d+)(?::\s*(optional))?\]/i);
       if (outMatch) {
         outputTypes[nodeId] = outMatch[1].trim().toLowerCase() || "any";
       } else if (fileMatch) {
         const expectedType = fileMatch[1].trim().toLowerCase();
         const order = parseInt(fileMatch[2], 10);
+        const optional = !!fileMatch[3];
         const inputs = (n.inputs as Record<string, unknown>) ?? {};
         fileNodes[order] = {
           nodeId,
           keys: Object.keys(inputs),
           expectedType,
+          optional,
         };
       }
     }
@@ -133,9 +175,9 @@ export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflo
   }
 
   // Build inputSlots view (same as fileNodes but without nodeId)
-  const inputSlots: Record<number, { keys: string[]; expectedType: string }> = {};
+  const inputSlots: Record<number, { keys: string[]; expectedType: string; optional?: boolean }> = {};
   for (const [order, info] of Object.entries(fileNodes)) {
-    inputSlots[parseInt(order)] = { keys: info.keys, expectedType: info.expectedType };
+    inputSlots[parseInt(order)] = { keys: info.keys, expectedType: info.expectedType, optional: info.optional };
   }
 
   return {

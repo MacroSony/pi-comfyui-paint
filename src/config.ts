@@ -5,6 +5,7 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PaintConfig } from "./types.js";
@@ -12,6 +13,13 @@ import type { PaintConfig } from "./types.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188";
+const DEFAULT_INLINE_IMAGE_LIMIT = 1;
+const MAX_INLINE_IMAGE_LIMIT = 4;
+const DEFAULT_IMAGE_QUALITY = 80;
+const DEFAULT_IMAGE_MAX_DIMENSION = 2000;
+const DEFAULT_IMAGE_MAX_BYTES = Math.floor(4.5 * 1024 * 1024);
+const DEFAULT_IMAGE_TOTAL_MAX_BYTES = 8 * 1024 * 1024;
+const DEFAULT_OUTPUT_RETENTION_HOURS = 7 * 24;
 
 /** Parse a boolean env flag (accepts 1/true/yes/on). */
 export function envFlag(name: string): boolean {
@@ -60,14 +68,49 @@ export function getConfig(cwd: string): PaintConfig {
     workflowDir = fs.existsSync(projectWorkflowDir) ? projectWorkflowDir : bundledWorkflowDir;
   }
 
+  const outputDirIsDefault = !process.env.COMFYUI_OUTPUT_DIR;
+  const outputDir = process.env.COMFYUI_OUTPUT_DIR
+    ? path.resolve(cwd, process.env.COMFYUI_OUTPUT_DIR)
+    : path.join(
+        os.tmpdir(),
+        `pi-comfyui-paint-${typeof process.getuid === "function" ? process.getuid() : "user"}`,
+      );
+
   return {
     serverAddress: normalizeComfyUrl(process.env.COMFYUI_URL),
     workflowDir,
     projectWorkflowDir,
     bundledWorkflowDir,
+    outputDir,
+    outputDirIsDefault,
+    outputRetentionHours: clampedIntFromEnv(
+      "COMFYUI_OUTPUT_RETENTION_HOURS",
+      DEFAULT_OUTPUT_RETENTION_HOURS,
+      0,
+    ),
     clientId: `pi-paint-${Math.random().toString(36).slice(2, 10)}`,
     interruptOnAbort: envFlag("COMFYUI_INTERRUPT_ON_ABORT"),
-    imageQuality: clampedIntFromEnv("COMFYUI_IMAGE_QUALITY", 85, 0, 100),
-    imageMaxDimension: clampedIntFromEnv("COMFYUI_IMAGE_MAX_DIMENSION", 2048, 0),
+    inlineImageLimit: clampedIntFromEnv(
+      "COMFYUI_INLINE_IMAGE_LIMIT",
+      DEFAULT_INLINE_IMAGE_LIMIT,
+      0,
+      MAX_INLINE_IMAGE_LIMIT,
+    ),
+    imageQuality: clampedIntFromEnv("COMFYUI_IMAGE_QUALITY", DEFAULT_IMAGE_QUALITY, 1, 100),
+    imageMaxDimension: clampedIntFromEnv(
+      "COMFYUI_IMAGE_MAX_DIMENSION",
+      DEFAULT_IMAGE_MAX_DIMENSION,
+      1,
+    ),
+    imageMaxBytes: clampedIntFromEnv(
+      "COMFYUI_IMAGE_MAX_BYTES",
+      DEFAULT_IMAGE_MAX_BYTES,
+      1024,
+    ),
+    imageTotalMaxBytes: clampedIntFromEnv(
+      "COMFYUI_IMAGE_TOTAL_MAX_BYTES",
+      DEFAULT_IMAGE_TOTAL_MAX_BYTES,
+      1024,
+    ),
   };
 }

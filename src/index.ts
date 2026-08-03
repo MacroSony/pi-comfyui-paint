@@ -6,9 +6,14 @@
  * Configuration (env vars or defaults):
  *   COMFYUI_URL                 - ComfyUI base URL (default: http://127.0.0.1:8188)
  *   COMFYUI_WORKFLOW_DIR        - Workflow JSON folder
+ *   COMFYUI_OUTPUT_DIR          - Root directory for private per-generation output folders
+ *   COMFYUI_OUTPUT_RETENTION_HOURS - Retention for managed generation folders (default: 168; 0 disables)
  *   COMFYUI_INTERRUPT_ON_ABORT  - Interrupt ComfyUI when a pi paint tool call is cancelled
- *   COMFYUI_IMAGE_QUALITY       - Reserved JPEG quality for optional future inline images (1-100, default: 85).
- *   COMFYUI_IMAGE_MAX_DIMENSION - Reserved max dimension for optional future inline images (default: 2048).
+ *   COMFYUI_INLINE_IMAGE_LIMIT  - Inline image preview count (0-4, default: 1)
+ *   COMFYUI_IMAGE_QUALITY       - Initial JPEG preview quality (1-100, default: 80)
+ *   COMFYUI_IMAGE_MAX_DIMENSION - Preview longest-side limit (default: 2000)
+ *   COMFYUI_IMAGE_MAX_BYTES     - Per-preview base64 byte limit (default: 4.5 MiB)
+ *   COMFYUI_IMAGE_TOTAL_MAX_BYTES - Total preview base64 byte limit (default: 8 MiB)
  *
  * Registers 8 tools:
  *   paint_list_workflows  paint_get_details       paint_validate_workflow
@@ -17,7 +22,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 import { getConfig } from "./config.js";
 import { createListWorkflowsTool } from "./tools/list-workflows.js";
 import { createGetDetailsTool } from "./tools/get-details.js";
@@ -46,18 +51,19 @@ export default function (pi: ExtensionAPI) {
   ];
 
   for (const tool of tools) {
-    pi.registerTool({
+    const parameters = buildSchema(tool.parameters);
+    pi.registerTool<typeof parameters, Record<string, unknown>>({
       name: tool.name,
       label: tool.label,
       description: tool.description,
       promptSnippet: tool.promptSnippet,
       promptGuidelines: tool.promptGuidelines,
-      parameters: buildSchema(tool.parameters),
+      parameters,
       ...(tool.prepareArguments ? { prepareArguments: tool.prepareArguments } : {}),
-      execute(_toolCallId: any, params: any, signal: any, onUpdate: any, _ctx: any) {
-        return tool.execute(params as any, signal, onUpdate) as any;
+      execute(_toolCallId, params, signal, onUpdate, _ctx) {
+        return tool.execute(params, signal, onUpdate);
       },
-    } as any);
+    });
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -72,7 +78,7 @@ export default function (pi: ExtensionAPI) {
 
 /** Convert simplified param defs to a TypeBox schema. */
 function buildSchema(params: Record<string, ToolParamDef>) {
-  const schema: Record<string, any> = {};
+  const schema: Record<string, TSchema> = {};
   for (const [name, def] of Object.entries(params)) {
     if (def.type === "optional") {
       const valueType = def.valueType ?? "unknown";
@@ -99,5 +105,5 @@ function buildSchema(params: Record<string, ToolParamDef>) {
         : Type.Unknown({ description: def.description });
     }
   }
-  return Type.Object(schema) as any;
+  return Type.Object(schema);
 }

@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   isWorkflowJsonFile,
   loadWorkflowJson,
+  listAvailableWorkflowFiles,
   resolveWorkflowPath,
   parseWorkflowDetails,
   validateWorkflow,
@@ -170,6 +171,47 @@ describe("resolveWorkflowPath", () => {
   });
 });
 
+describe("listAvailableWorkflowFiles", () => {
+  it("lists bundled fallbacks when the active directory is missing", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-list-"));
+    const missingActive = path.join(root, "missing");
+    const bundledDir = path.join(root, "bundled");
+    fs.mkdirSync(bundledDir);
+    fs.writeFileSync(path.join(bundledDir, "Bundled.json"), "{}");
+    try {
+      expect(listAvailableWorkflowFiles(missingActive, bundledDir)).toEqual([
+        {
+          name: "Bundled.json",
+          path: path.join(bundledDir, "Bundled.json"),
+          bundled: true,
+        },
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits bundled files shadowed by an active workflow", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-list-"));
+    const activeDir = path.join(root, "active");
+    const bundledDir = path.join(root, "bundled");
+    fs.mkdirSync(activeDir);
+    fs.mkdirSync(bundledDir);
+    fs.writeFileSync(path.join(activeDir, "Same.json"), "{}");
+    fs.writeFileSync(path.join(bundledDir, "Same.json"), "{}");
+    fs.writeFileSync(path.join(bundledDir, "Extra.json"), "{}");
+    try {
+      const available = listAvailableWorkflowFiles(activeDir, bundledDir);
+      expect(available.map(({ name, bundled }) => ({ name, bundled }))).toEqual([
+        { name: "Same.json", bundled: false },
+        { name: "Extra.json", bundled: true },
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── parseWorkflowDetails ────────────────────────────────────────────────────
 
 describe("parseWorkflowDetails", () => {
@@ -210,6 +252,21 @@ describe("parseWorkflowDetails", () => {
     expect(details.fileNodes[1].expectedType).toBe("mask");
     expect(details.fileNodes[0].keys).toContain("image");
     expect(details.fileNodes[1].keys).toContain("image");
+  });
+
+  it("marks [FILE:type:order:optional] slots as optional", () => {
+    const details = parseWorkflowDetails({
+      "10": {
+        inputs: { image: "placeholder.png" },
+        _meta: { title: "[FILE:image:1:optional] First frame" },
+      },
+    });
+    expect(details.fileNodes[1]).toMatchObject({
+      nodeId: "10",
+      expectedType: "image",
+      optional: true,
+    });
+    expect(details.inputSlots[1].optional).toBe(true);
   });
 
   it("builds inputSlots view", () => {

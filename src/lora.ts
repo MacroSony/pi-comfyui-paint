@@ -110,8 +110,11 @@ export function metadataByFile(metadata: LoraMetadata[]): Record<string, LoraMet
 }
 
 /** Query ComfyUI object_info for installed LoRA names. */
-export async function getInstalledLoras(serverAddress: string): Promise<string[]> {
-  const info = (await getObjectInfo(serverAddress)) as Record<
+export async function getInstalledLoras(
+  serverAddress: string,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const info = (await getObjectInfo(serverAddress, signal)) as Record<
     string,
     { input?: { required?: Record<string, [Array<unknown>, Record<string, unknown>?]> } }
   >;

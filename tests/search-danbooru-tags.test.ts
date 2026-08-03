@@ -13,6 +13,11 @@ import {
 } from "../src/tools/search-danbooru-tags.js";
 import type { PaintConfig } from "../src/types.js";
 
+function toolResultText(result: Awaited<ReturnType<ReturnType<typeof createSearchDanbooruTagsTool>["execute"]>>): string {
+  const content = result.content.find((item) => item.type === "text");
+  return content?.type === "text" ? content.text : "";
+}
+
 describe("categoryName", () => {
   it("maps known Danbooru categories", () => {
     expect(categoryName(0)).toBe("general");
@@ -151,7 +156,7 @@ describe("paint_search_danbooru_tags tool", () => {
     const result = await tool.execute({ queries: ["smile"], limit: 1 });
 
     expect(String(fetchMock.mock.calls[0][0])).toContain("/tags.json?");
-    expect(result.content[0].text).toContain("**smile**");
+    expect(toolResultText(result)).toContain("**smile**");
     expect(result.details.mode).toBe("name");
   });
 
@@ -205,10 +210,10 @@ describe("paint_search_danbooru_tags tool", () => {
     expect(requested.searchParams.get("query")).toBe("smile");
     expect(requested.searchParams.get("order")).toBe("cosine");
     expect(requested.searchParams.get("category")).toBe("general");
-    expect(result.content[0].text).toContain("Posts matched: 12,000");
-    expect(result.content[0].text).toContain("**open_mouth**");
-    expect(result.content[0].text).toContain("freq 25.0%");
-    expect(result.content[0].text).toContain("Wiki page tags:");
+    expect(toolResultText(result)).toContain("Posts matched: 12,000");
+    expect(toolResultText(result)).toContain("**open_mouth**");
+    expect(toolResultText(result)).toContain("freq 25.0%");
+    expect(toolResultText(result)).toContain("Wiki page tags:");
     expect(result.details.mode).toBe("related");
   });
 
@@ -218,7 +223,7 @@ describe("paint_search_danbooru_tags tool", () => {
 
     const tool = createSearchDanbooruTagsTool({} as PaintConfig);
     const result = await tool.execute({ queries: ["smile"], limit: 1 });
-    const text = result.content[0].text ?? "";
+    const text = toolResultText(result);
 
     expect(text).toContain("Danbooru request failed");
     expect(text).toContain("status 429");
@@ -231,7 +236,7 @@ describe("paint_search_danbooru_tags tool", () => {
 
     const tool = createSearchDanbooruTagsTool({} as PaintConfig);
     const result = await tool.execute({ queries: ["smile"], mode: "related", limit: 1 });
-    const text = result.content[0].text ?? "";
+    const text = toolResultText(result);
 
     expect(text).toContain("Danbooru request failed");
     expect(text).toContain("status 503");
@@ -252,7 +257,7 @@ describe("paint_search_danbooru_tags tool", () => {
 
     const tool = createSearchDanbooruTagsTool({} as PaintConfig);
     const result = await tool.execute({ queries: ["light smile"], limit: 1 });
-    const text = result.content[0].text ?? "";
+    const text = toolResultText(result);
 
     expect(text).toContain("Warning: `light smile` is not exact Danbooru tag spelling. Use `light_smile`.");
     expect(text).toContain("**light_smile**");
@@ -264,7 +269,7 @@ describe("paint_search_danbooru_tags tool", () => {
 
     const tool = createSearchDanbooruTagsTool({} as PaintConfig);
     const result = await tool.execute({ queries: ["not_a_real_tag_zzzzzz"], limit: 1 });
-    const text = result.content[0].text ?? "";
+    const text = toolResultText(result);
 
     expect(text).toContain("Warning: `not_a_real_tag_zzzzzz` was not found as an exact Danbooru tag.");
     expect(text).toContain("No matching tags found.");
@@ -294,7 +299,7 @@ describe("paint_search_danbooru_tags tool", () => {
 
     const tool = createSearchDanbooruTagsTool({} as PaintConfig);
     const result = await tool.execute({ queries: ["not_a_real_tag_zzzzzz"], mode: "related", limit: 1 });
-    const text = result.content[0].text ?? "";
+    const text = toolResultText(result);
 
     expect(text).toContain("Warning: `not_a_real_tag_zzzzzz` was not found as an exact Danbooru tag.");
     expect(text).toContain("Related tags are for the submitted search expression.");

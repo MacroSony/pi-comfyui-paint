@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 9 * * 1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pi-dependencies: [lockfile, latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      - name: Test against latest Pi extension APIs
+        if: matrix.pi-dependencies == 'latest'
+        run: npm install --no-save @earendil-works/pi-coding-agent@latest typebox@latest
+      - run: npm run check
+      - run: npm test
+      - run: npm pack --dry-run

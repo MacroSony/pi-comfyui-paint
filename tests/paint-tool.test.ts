@@ -6,6 +6,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import sharp from "sharp";
 import { createPaintTool, collectFileSlotWarnings } from "../src/tools/paint.js";
 import { queuePrompt, pollHistory, downloadOutput } from "../src/comfyui-client.js";
 import type { PaintConfig } from "../src/types.js";
@@ -27,10 +28,16 @@ const config: PaintConfig = {
   workflowDir: "/tmp/wf",
   projectWorkflowDir: "/tmp/proj",
   bundledWorkflowDir: "/tmp/bundled",
+  outputDir: "/tmp/pi-comfyui-paint-tests",
+  outputDirIsDefault: false,
+  outputRetentionHours: 168,
   clientId: "test-client",
   interruptOnAbort: false,
-  imageQuality: 85,
-  imageMaxDimension: 2048,
+  inlineImageLimit: 1,
+  imageQuality: 80,
+  imageMaxDimension: 2000,
+  imageMaxBytes: Math.floor(4.5 * 1024 * 1024),
+  imageTotalMaxBytes: 8 * 1024 * 1024,
 };
 
 describe("createPaintTool prepareArguments", () => {
@@ -132,6 +139,12 @@ describe("collectFileSlotWarnings", () => {
     expect(warning).toContain("slot 1 → (no default)");
     expect(warning).not.toContain("→ image");
   });
+
+  it("does not warn about uncovered optional file slots", () => {
+    const optionalSlot = { ...slots[0], optional: true };
+    const wf = { "10": { inputs: { image: "placeholder.png" } } };
+    expect(collectFileSlotWarnings(wf, undefined, [optionalSlot])).toBeUndefined();
+  });
 });
 
 describe("createPaintTool generated media content", () => {
@@ -139,7 +152,7 @@ describe("createPaintTool generated media content", () => {
     vi.clearAllMocks();
   });
 
-  it("returns image and video outputs by path without embedding media bytes", async () => {
+  it("returns originals by path, inlines only bounded image previews, and supports path-only mode", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-paint-tool-test-"));
     try {
       const workflowDir = path.join(tmpDir, "workflows");
@@ -174,9 +187,17 @@ describe("createPaintTool generated media content", () => {
           },
         },
       });
+      const validPng = await sharp({
+        create: {
+          width: 8,
+          height: 8,
+          channels: 3,
+          background: { r: 20, g: 40, b: 60 },
+        },
+      }).png().toBuffer();
       vi.mocked(downloadOutput).mockResolvedValue([
         {
-          data: Buffer.from("not really a png"),
+          data: validPng,
           filename: "image.png",
           ext: "png",
           mimeType: "image/png",
@@ -189,15 +210,20 @@ describe("createPaintTool generated media content", () => {
         },
       ]);
 
-      const tool = createPaintTool({ ...config, workflowDir }, tmpDir);
+      const tool = createPaintTool({
+        ...config,
+        workflowDir,
+        outputDir: path.join(tmpDir, "outputs"),
+      }, tmpDir);
       const result = await tool.execute(
         { prompt: "test", workflow: "test.json" },
         new AbortController().signal,
       );
 
-      expect(result.content).toHaveLength(1);
+      expect(result.content).toHaveLength(2);
       expect(result.content[0].type).toBe("text");
-      expect(result.content.every((item) => item.data === undefined)).toBe(true);
+      expect(result.content[1]).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+      expect(result.content.filter((item) => item.type === "image")).toHaveLength(1);
 
       const files = result.details.files as Array<{ path: string; mimeType: string }>;
       expect(files).toHaveLength(2);
@@ -205,6 +231,33 @@ describe("createPaintTool generated media content", () => {
       for (const file of files) {
         expect(fs.existsSync(file.path)).toBe(true);
       }
+      const previews = result.details.inlinePreviews as Array<{ path: string; encodedBytes: number }>;
+      expect(previews).toHaveLength(1);
+      expect(previews[0].path).toBe(files[0].path);
+      expect(previews[0].encodedBytes).toBeGreaterThan(0);
+
+      const pathOnlyTool = createPaintTool({
+        ...config,
+        workflowDir,
+        outputDir: path.join(tmpDir, "outputs"),
+        inlineImageLimit: 0,
+      }, tmpDir);
+      const pathOnlyResult = await pathOnlyTool.execute(
+        { prompt: "test", workflow: "test.json" },
+        new AbortController().signal,
+      );
+      expect(pathOnlyResult.content).toHaveLength(1);
+      expect(pathOnlyResult.content[0].type).toBe("text");
+      expect(pathOnlyResult.details.inlinePreviews).toEqual([]);
+
+      await expect(tool.execute(
+        { prompt: "test", workflow: "test.json", variables: "invalid" },
+        new AbortController().signal,
+      )).rejects.toThrow("variables must be a JSON object");
+      await expect(tool.execute(
+        { prompt: "test", workflow: "test.json", loras: 42 },
+        new AbortController().signal,
+      )).rejects.toThrow("loras must be a JSON object");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

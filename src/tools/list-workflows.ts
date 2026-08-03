@@ -3,8 +3,7 @@
  */
 
 import * as fs from "node:fs";
-import * as path from "node:path";
-import { isWorkflowJsonFile, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
+import { listAvailableWorkflowFiles, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
 export function createListWorkflowsTool(
@@ -24,8 +23,8 @@ export function createListWorkflowsTool(
     ],
     parameters: {},
     async execute() {
-      const summaryLine = (file: string, dir: string, markBundled: boolean): string => {
-        const wf = loadWorkflowJson(path.join(dir, file));
+      const summaryLine = (file: string, filePath: string, markBundled: boolean): string => {
+        const wf = loadWorkflowJson(filePath);
         if (!wf) return `- ${file}${markBundled ? " (bundled)" : ""} (unreadable JSON)`;
         const details = parseWorkflowDetails(wf);
         const varCount = Object.keys(details.variables).length;
@@ -41,26 +40,11 @@ export function createListWorkflowsTool(
         return `- ${file}${markBundled ? " (bundled)" : ""} (${bits.join(", ")})`;
       };
 
-      if (!fs.existsSync(workflowDir)) {
-        return {
-          content: [{ type: "text", text: `Workflow directory not found: ${workflowDir}` }],
-          details: {},
-        };
-      }
-      const files = fs
-        .readdirSync(workflowDir)
-        .filter(isWorkflowJsonFile)
-        .sort();
+      const available = listAvailableWorkflowFiles(workflowDir, bundledWorkflowDir);
+      const files = available.filter((entry) => !entry.bundled).map((entry) => entry.name);
+      const extraBundled = available.filter((entry) => entry.bundled).map((entry) => entry.name);
 
-      // Bundled workflows are usable by name via per-file fallback, so surface the
-      // ones not shadowed by a same-named project file (marked "(bundled)").
-      const bundledFiles =
-        bundledWorkflowDir && !sameDir(bundledWorkflowDir, workflowDir) && fs.existsSync(bundledWorkflowDir)
-          ? fs.readdirSync(bundledWorkflowDir).filter(isWorkflowJsonFile).sort()
-          : [];
-      const extraBundled = bundledFiles.filter((f) => !files.includes(f));
-
-      if (files.length === 0 && extraBundled.length === 0) {
+      if (available.length === 0) {
         return {
           content: [{ type: "text", text: "No workflows found in the .pi/comfyui_workflows folder." }],
           details: {},
@@ -69,19 +53,18 @@ export function createListWorkflowsTool(
 
       // One compact summary line per workflow (kept cheap: ~40 tokens per row),
       // enough to pick the right workflow without expanding full details.
-      const lines = [
-        ...files.map((file) => summaryLine(file, workflowDir, false)),
-        ...extraBundled.map((file) => summaryLine(file, bundledWorkflowDir!, true)),
-      ];
+      const lines = available.map((entry) =>
+        summaryLine(entry.name, entry.path, entry.bundled),
+      );
       return {
         content: [{ type: "text", text: `Available workflows:\n${lines.join("\n")}` }],
-        details: { workflows: files, bundledWorkflows: extraBundled },
+        details: {
+          workflowDir,
+          workflowDirExists: fs.existsSync(workflowDir),
+          workflows: files,
+          bundledWorkflows: extraBundled,
+        },
       };
     },
   };
-}
-
-/** True when two directory paths point at the same location (normalized compare). */
-function sameDir(a: string, b: string): boolean {
-  return path.resolve(a) === path.resolve(b);
 }

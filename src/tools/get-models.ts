@@ -38,9 +38,9 @@ export function createGetModelsTool(config: PaintConfig): ToolRegistration {
       "Use paint_get_models to discover installed models before recommending a workflow or selecting a model name for paint variables.",
     ],
     parameters: {},
-    async execute() {
+    async execute(_params, signal) {
       try {
-        const info = (await getObjectInfo(config.serverAddress)) as Record<
+        const info = (await getObjectInfo(config.serverAddress, signal)) as Record<
           string,
           {
             input?: {
@@ -88,6 +88,7 @@ export function createGetModelsTool(config: PaintConfig): ToolRegistration {
           details: { models },
         };
       } catch (e) {
+        if (signal?.aborted) throw e;
         return {
           content: [
             { type: "text", text: `Failed to fetch models from ComfyUI: ${(e as Error).message}` },

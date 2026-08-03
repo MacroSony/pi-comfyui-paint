@@ -29,10 +29,11 @@ The `paint` tool is not limited to the workflows it ships with. Any ComfyUI API-
 | `[VAR] Name` on a Primitive* node | `paint.variables` / `prompt` / `negative_prompt` injection point | prompt & variables are **ignored**; the workflow's hardcoded values are used |
 | `[OUTPUT:image]` on a SaveImage node | Marks the result node | fallback: **all** output nodes are scanned & downloaded |
 | `[FILE:image:1]` on a LoadImage node | `paint.input_files` upload slot (order = number) | no slot; passing input_files errors; without input_files no warning is raised |
+| `[FILE:image:1:optional]` on a LoadImage node | Optional upload slot: uncovered slots are **removed from the graph** (downstream links stripped) so optional model inputs stay unconnected | same as above |
 | `[LORA:slot]` on a Power Lora Loader (rgthree) | `paint.loras` override slot | unannotated Power Lora Loaders are auto-detected as `node_<id>` slots — overrides still work via that name, but annotation is recommended |
 | `[NOTE]` | Documentation shown in `paint_get_details` | — |
 
-Warnings: if a workflow **has** `[FILE]` slots but fewer `input_files` are passed than slots, `paint` warns and the uncovered LoadImage node falls back to its default input image.
+Warnings: if a workflow **has** `[FILE]` slots but fewer `input_files` are passed than slots, `paint` warns and the uncovered LoadImage node falls back to its default input image. Slots marked `:optional` are exempt — they are disconnected from the graph instead, which lets one workflow serve multiple modes (e.g. MiniMax H3: 0 files = t2v, 1 = i2v, 2 = fl2v).
 
 ## Workflow
 

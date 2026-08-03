@@ -88,8 +88,13 @@ describe("getConfig", () => {
     delete process.env.COMFYUI_URL;
     delete process.env.COMFYUI_WORKFLOW_DIR;
     delete process.env.COMFYUI_INTERRUPT_ON_ABORT;
+    delete process.env.COMFYUI_OUTPUT_DIR;
+    delete process.env.COMFYUI_OUTPUT_RETENTION_HOURS;
+    delete process.env.COMFYUI_INLINE_IMAGE_LIMIT;
     delete process.env.COMFYUI_IMAGE_QUALITY;
     delete process.env.COMFYUI_IMAGE_MAX_DIMENSION;
+    delete process.env.COMFYUI_IMAGE_MAX_BYTES;
+    delete process.env.COMFYUI_IMAGE_TOTAL_MAX_BYTES;
   });
 
   afterEach(() => {
@@ -101,8 +106,13 @@ describe("getConfig", () => {
     const config = getConfig("/tmp/test-project");
     expect(config.serverAddress).toBe("http://127.0.0.1:8188");
     expect(config.interruptOnAbort).toBe(false);
-    expect(config.imageQuality).toBe(85);
-    expect(config.imageMaxDimension).toBe(2048);
+    expect(config.outputRetentionHours).toBe(168);
+    expect(config.outputDirIsDefault).toBe(true);
+    expect(config.inlineImageLimit).toBe(1);
+    expect(config.imageQuality).toBe(80);
+    expect(config.imageMaxDimension).toBe(2000);
+    expect(config.imageMaxBytes).toBe(Math.floor(4.5 * 1024 * 1024));
+    expect(config.imageTotalMaxBytes).toBe(8 * 1024 * 1024);
     expect(config.clientId).toMatch(/^pi-paint-/);
     expect(config.projectWorkflowDir).toContain("test-project/.pi/comfyui_workflows");
   });
@@ -142,18 +152,18 @@ describe("getConfig", () => {
     expect(config.imageMaxDimension).toBe(4096);
   });
 
-  it("handles quality=0 for raw PNG", async () => {
+  it("clamps quality=0 to the safe minimum", async () => {
     process.env.COMFYUI_IMAGE_QUALITY = "0";
     const { getConfig } = await import("../src/config.js");
     const config = getConfig("/tmp/test");
-    expect(config.imageQuality).toBe(0);
+    expect(config.imageQuality).toBe(1);
   });
 
-  it("handles maxDimension=0 for no resize", async () => {
+  it("clamps maxDimension=0 to the safe minimum", async () => {
     process.env.COMFYUI_IMAGE_MAX_DIMENSION = "0";
     const { getConfig } = await import("../src/config.js");
     const config = getConfig("/tmp/test");
-    expect(config.imageMaxDimension).toBe(0);
+    expect(config.imageMaxDimension).toBe(1);
   });
 
   it("clamps COMFYUI_IMAGE_QUALITY above 100 to 100", async () => {
@@ -162,22 +172,43 @@ describe("getConfig", () => {
     expect(getConfig("/tmp/test").imageQuality).toBe(100);
   });
 
-  it("clamps negative COMFYUI_IMAGE_QUALITY to 0", async () => {
+  it("clamps negative COMFYUI_IMAGE_QUALITY to 1", async () => {
     process.env.COMFYUI_IMAGE_QUALITY = "-10";
     const { getConfig } = await import("../src/config.js");
-    expect(getConfig("/tmp/test").imageQuality).toBe(0);
+    expect(getConfig("/tmp/test").imageQuality).toBe(1);
   });
 
-  it("clamps negative COMFYUI_IMAGE_MAX_DIMENSION to 0", async () => {
+  it("clamps negative COMFYUI_IMAGE_MAX_DIMENSION to 1", async () => {
     process.env.COMFYUI_IMAGE_MAX_DIMENSION = "-2048";
     const { getConfig } = await import("../src/config.js");
-    expect(getConfig("/tmp/test").imageMaxDimension).toBe(0);
+    expect(getConfig("/tmp/test").imageMaxDimension).toBe(1);
   });
 
   it("falls back to default for non-numeric quality", async () => {
     process.env.COMFYUI_IMAGE_QUALITY = "abc";
     const { getConfig } = await import("../src/config.js");
-    expect(getConfig("/tmp/test").imageQuality).toBe(85);
+    expect(getConfig("/tmp/test").imageQuality).toBe(80);
+  });
+
+  it("respects and clamps COMFYUI_INLINE_IMAGE_LIMIT", async () => {
+    const { getConfig } = await import("../src/config.js");
+    process.env.COMFYUI_INLINE_IMAGE_LIMIT = "0";
+    expect(getConfig("/tmp/test").inlineImageLimit).toBe(0);
+    process.env.COMFYUI_INLINE_IMAGE_LIMIT = "99";
+    expect(getConfig("/tmp/test").inlineImageLimit).toBe(4);
+  });
+
+  it("resolves a relative COMFYUI_OUTPUT_DIR from the project", async () => {
+    process.env.COMFYUI_OUTPUT_DIR = "artifacts/paint";
+    const { getConfig } = await import("../src/config.js");
+    expect(getConfig("/tmp/test").outputDir).toBe("/tmp/test/artifacts/paint");
+    expect(getConfig("/tmp/test").outputDirIsDefault).toBe(false);
+  });
+
+  it("accepts disabled output retention", async () => {
+    process.env.COMFYUI_OUTPUT_RETENTION_HOURS = "0";
+    const { getConfig } = await import("../src/config.js");
+    expect(getConfig("/tmp/test").outputRetentionHours).toBe(0);
   });
 
   it("respects COMFYUI_WORKFLOW_DIR if set", async () => {

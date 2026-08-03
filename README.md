@@ -28,9 +28,18 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.2.0
 |---------|---------|-------------|
 | `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
 | `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
+| `COMFYUI_OUTPUT_DIR` | `<temp>/pi-comfyui-paint-<user>` | Root for private, unique per-generation output folders. Relative paths are resolved from the project directory. Set this to a persistent location if results must survive temp cleanup. |
+| `COMFYUI_OUTPUT_RETENTION_HOURS` | `168` | Delete extension-managed generation folders older than this many hours when a new generation saves output. Set to `0` to disable extension cleanup. Unmarked folders are never removed. |
 | `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to call ComfyUI `/interrupt` when a `paint` tool call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI may continue running. |
-| `COMFYUI_IMAGE_QUALITY` | `85` | Reserved for optional future inline-image compression (1–100). Generated media is currently returned by path only; original files on disk are never modified. |
-| `COMFYUI_IMAGE_MAX_DIMENSION` | `2048` | Reserved for optional future inline-image resizing. Generated media is currently returned by path only. |
+| `COMFYUI_INLINE_IMAGE_LIMIT` | `1` | Number of generated images returned to the model as inline previews. Clamped to 0–4; set to `0` for path-only results. |
+| `COMFYUI_IMAGE_QUALITY` | `80` | Initial JPEG quality for inline previews, clamped to 1–100. Quality and dimensions are reduced further when needed to meet byte limits. |
+| `COMFYUI_IMAGE_MAX_DIMENSION` | `2000` | Maximum width or height of an inline preview. |
+| `COMFYUI_IMAGE_MAX_BYTES` | `4718592` | Maximum base64-encoded bytes for one inline preview (4.5 MiB). |
+| `COMFYUI_IMAGE_TOTAL_MAX_BYTES` | `8388608` | Maximum base64-encoded bytes across all previews returned by one `paint` call (8 MiB). |
+
+Every generated original is returned by local path. Up to the configured number of image outputs are also returned as bounded JPEG previews so the agent can inspect them without another `read` call. Videos and other non-image outputs are path-only. Preview processing never modifies the originals and does not make an otherwise successful generation fail.
+
+The default output root is user-specific and private. Each generation uses a random subdirectory with user-only directory/file permissions where the platform supports POSIX modes. Paths are temporary by default; configure `COMFYUI_OUTPUT_DIR` for durable output.
 
 ## Workflow Resolution
 
@@ -79,6 +88,7 @@ Workflow JSONs use `_meta.title` annotations:
 - `[NOTE]` — Documentation shown in `paint_get_details`
 - `[OUTPUT:type]` — Tagged output node
 - `[FILE:type:order]` — Input file slot for `paint.input_files`
+- `[FILE:type:order:optional]` — Optional input file slot. When no `input_files` entry covers it, the node is removed from the graph (and all downstream links to it are stripped) instead of failing on its placeholder default. Use this for optional image inputs like MiniMax H3 `first_frame`/`last_frame`/`ref_image_N` — one workflow can serve t2v/i2v/fl2v depending on how many files are passed.
 - `[LORA:slot]` — LoRA loader slot for `paint.loras` overrides. Intended for `Power Lora Loader (rgthree)` nodes.
 
 For workflows with `[FILE:type:order]` nodes, pass local image paths to `paint` as `input_files` in slot order. Relative paths are resolved from the current project directory, uploaded to ComfyUI as input files, and inserted into the annotated workflow nodes.

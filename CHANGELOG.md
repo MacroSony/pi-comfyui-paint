@@ -7,13 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `paint` returns bounded inline JPEG previews for image outputs while always
+  retaining the original local paths. Preview count, quality, dimensions,
+  per-image bytes, and total bytes are configurable; videos and other media
+  remain path-only.
+- Private, collision-free per-generation output directories with configurable
+  output root and retention. Cleanup only removes expired directories carrying
+  the extension's ownership marker.
+- Optional `[FILE:type:order:optional]` workflow slots, which are disconnected
+  when uncovered so one workflow can support text-to-video and image-guided modes.
+- CI tests both the lockfile Pi API baseline and the latest published Pi API.
+
 ### Changed
 
-- `paint` now returns generated image/video files by local path only and no
-  longer embeds generated media bytes in tool `content`. This avoids shipping
-  large base64 video payloads through pi's tool-result/UI/provider pipeline and
-  prevents hosts from attempting to decode video bytes as images. The removed
-  `PI_PAINT_INLINE` behavior is no longer applicable.
+- Generated originals are written with private permissions and are no longer
+  retained in memory after being saved. Only the limited preview candidates are
+  kept for inline processing.
+- Pi/typebox host packages are optional wildcard peers with current versions
+  used only as development and CI type-check baselines.
+- Inline preview defaults use conservative provider-safe limits:
+  2000px longest side, JPEG quality 80, and 4.5 MiB encoded per image.
+
+### Fixed
+
+- Video outputs are never mislabeled as image tool content.
+- Output downloads honor cancellation and surface HTTP failures instead of
+  silently degrading to a misleading "no images" result.
+- Poll sleeps remove completed abort listeners instead of accumulating one per
+  second during long generations.
+- Workflow listing/status now includes bundled fallbacks when the active
+  workflow directory is empty or missing.
+- `paint` rejects malformed `variables` and `loras` JSON values rather than
+  silently ignoring them.
+
+### Security
+
+- Upgraded `sharp` to the patched 0.35 line.
+- Default output roots are ownership-checked and private; generation folders
+  and files use user-only permissions on POSIX systems.
 
 ## [0.2.0] - 2026-07-31
 

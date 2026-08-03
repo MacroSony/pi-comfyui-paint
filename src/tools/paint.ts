@@ -4,7 +4,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import { resolveWorkflowPath, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
 import {
   applyPowerLoraOverrides,
@@ -23,9 +22,17 @@ import {
   interruptComfy,
   extractExecutionError,
 } from "../comfyui-client.js";
-import type { PaintConfig, GenerationResult, UploadedInput } from "../types.js";
+import { compressImageForLLM } from "../image-compression.js";
+import { createGenerationOutputDir, writeGeneratedFile } from "../output-storage.js";
+import type {
+  DownloadedOutput,
+  GenerationResult,
+  InlineImagePreview,
+  PaintConfig,
+  UploadedInput,
+} from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
-import type { OnUpdate } from "../types.js";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 
 /**
  * Build a warning when [FILE:type:order] slots are left uncovered by input_files.
@@ -36,12 +43,14 @@ import type { OnUpdate } from "../types.js";
 export function collectFileSlotWarnings(
   wfRaw: Record<string, unknown>,
   inputFiles: unknown,
-  fileSlots: Array<{ order: number; nodeId: string; keys: string[]; expectedType: string }>,
+  fileSlots: Array<{ order: number; nodeId: string; keys: string[]; expectedType: string; optional?: boolean }>,
 ): string | undefined {
   if (fileSlots.length === 0) return undefined;
   const providedCount = Array.isArray(inputFiles) ? inputFiles.length : 0;
   if (providedCount >= fileSlots.length) return undefined;
-  const uncovered = fileSlots.slice(providedCount);
+  // Uncovered OPTIONAL slots are disconnected from the graph on purpose — no warning.
+  const uncovered = fileSlots.slice(providedCount).filter((slot) => !slot.optional);
+  if (uncovered.length === 0) return undefined;
   const defaults = uncovered
     .map((slot) => {
       const node = wfRaw[slot.nodeId] as Record<string, unknown> | undefined;
@@ -117,7 +126,11 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
       input_files: { type: "optional", description: "Local image file paths to upload into [FILE:type:order] workflow slots, in slot order. Relative paths are resolved from the current project directory." },
       loras: { type: "optional", description: "Optional LoRA overrides for [LORA:slot] Power Lora Loader slots. Preferred shape: {'base_style': {file:'...', strength:0.7}} or {'base_style': [{file:'...', strength:0.7}, ...]}. Overrides replace the contents of that slot. Slot names come from paint_get_details (LoRA slots); valid 'file' values come from paint_get_models (LoRA category) or the 'Usable LoRA metadata' in paint_get_details. Use POSIX path separators (forward slash '/'). If a LoRA has an activationPrompt in its metadata, add it to 'prompt' yourself — it is not added automatically. Omitted strength defaults to the sidecar's defaultStrength, else 0.7." },
     },
-    async execute(params, signal, onUpdate?: OnUpdate) {
+    async execute(
+      params,
+      signal,
+      onUpdate?: AgentToolUpdateCallback<Record<string, unknown>>,
+    ) {
       let promptId: string | undefined;
       try {
         const startTime = Date.now();
@@ -150,7 +163,14 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
         // 3. Deep clone the workflow and apply variables
         const promptWf = JSON.parse(JSON.stringify(wfRaw)) as Record<string, unknown>;
 
-        const variables = params?.variables as Record<string, unknown> | undefined;
+        const rawVariables = params?.variables;
+        if (
+          rawVariables != null &&
+          (typeof rawVariables !== "object" || Array.isArray(rawVariables))
+        ) {
+          throw new Error("variables must be a JSON object keyed by workflow variable name.");
+        }
+        const variables = rawVariables as Record<string, unknown> | undefined;
         if (variables) {
           for (const [key, value] of Object.entries(variables)) {
             const varInfo = details.rawVars[key];
@@ -183,9 +203,15 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
         }
 
         // 5. Apply LoRA overrides into annotated/auto-detected Power Lora Loader slots.
-        const loraOverrides = normalizeLoraOverrides(params?.loras);
+        const rawLoras = params?.loras;
+        if (rawLoras != null && typeof rawLoras !== "object") {
+          throw new Error(
+            "loras must be a JSON object keyed by LoRA slot name or a legacy override array.",
+          );
+        }
+        const loraOverrides = normalizeLoraOverrides(rawLoras);
         if (loraOverrides.length > 0) {
-          const installedLoras = await getInstalledLoras(config.serverAddress);
+          const installedLoras = await getInstalledLoras(config.serverAddress, signal);
           validateLoraOverridesInstalled(loraOverrides, installedLoras);
         }
         const appliedLoras = loraOverrides.length > 0
@@ -238,8 +264,35 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           }
         }
 
+        // 6.5 Remove uncovered OPTIONAL [FILE] slot nodes entirely: delete the node
+        //     and strip every downstream input link pointing at it, so optional image
+        //     inputs (e.g. MiniMaxH3 first_frame/last_frame, ref_image_N) simply stay
+        //     unconnected and the model runs in its no-input mode (t2v).
+        const coveredOrders = new Set(uploadedInputs.map((u) => u.slot));
+        const uncoveredOptional = fileSlots.filter(
+          (slot) => slot.optional && !coveredOrders.has(slot.order),
+        );
+        if (uncoveredOptional.length > 0) {
+          const removedIds = new Set(uncoveredOptional.map((slot) => slot.nodeId));
+          for (const id of removedIds) delete promptWf[id];
+          for (const node of Object.values(promptWf)) {
+            const inputs = (node as Record<string, unknown>).inputs as
+              | Record<string, unknown>
+              | undefined;
+            if (!inputs) continue;
+            for (const [key, value] of Object.entries(inputs)) {
+              if (Array.isArray(value) && typeof value[0] === "string" && removedIds.has(value[0])) {
+                delete inputs[key];
+              }
+            }
+          }
+        }
+
         // 7. Queue and wait (with progress streaming)
-        onUpdate?.({ content: [{ type: "text", text: "Queuing prompt on ComfyUI…" }] });
+        onUpdate?.({
+          content: [{ type: "text", text: "Queuing prompt on ComfyUI…" }],
+          details: {},
+        });
         promptId = await queuePrompt(config.serverAddress, promptWf, config.clientId, signal);
 
         const history = await pollHistory(
@@ -256,6 +309,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
                   text: `Waiting for ComfyUI… ${Math.round(elapsedMs / 1000)}s elapsed`,
                 },
               ],
+              details: { promptId, elapsedMs },
             });
           },
         );
@@ -286,13 +340,40 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           };
         }
 
-        // 8. Download outputs
-        const outputDir = path.join(os.tmpdir(), "pi-paint-outputs");
-        fs.mkdirSync(outputDir, { recursive: true });
+        // 8. Download outputs into a private, collision-free generation directory.
+        const outputStorage = createGenerationOutputDir(
+          config.outputDir,
+          config.outputRetentionHours,
+          config.outputDirIsDefault,
+        );
+        const outputDir = outputStorage.outputDir;
         const genTimestamp = Date.now();
 
         const results: GenerationResult[] = [];
+        const inlinePreviews: InlineImagePreview[] = [];
+        const previewFailures: Array<{ path: string; error: string }> = [];
+        const previewCandidates: Array<{ path: string; data: Buffer }> = [];
+        let totalPreviewBytes = 0;
+        let generatedImageCount = 0;
         let counter = 0;
+
+        const saveDownloadedFile = (file: DownloadedOutput): void => {
+          const outName = `paint_${genTimestamp}_${counter}.${file.ext}`;
+          const outPath = path.join(outputDir, outName);
+          writeGeneratedFile(outPath, file.data);
+          results.push({
+            path: outPath,
+            filename: outName,
+            mimeType: file.mimeType,
+          });
+          counter++;
+
+          if (!file.mimeType.startsWith("image/")) return;
+          generatedImageCount++;
+          if (previewCandidates.length < config.inlineImageLimit) {
+            previewCandidates.push({ path: outPath, data: file.data });
+          }
+        };
 
         // Prefer tagged output nodes, fallback to all
         const outputNodeIds =
@@ -304,36 +385,18 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           const nodeOutput = promptHistory.outputs[nodeId];
           if (!nodeOutput) continue;
 
-          const files = await downloadOutput(config.serverAddress, nodeOutput);
+          const files = await downloadOutput(config.serverAddress, nodeOutput, signal);
           for (const file of files) {
-            const outName = `paint_${genTimestamp}_${counter}.${file.ext}`;
-            const outPath = path.join(outputDir, outName);
-            fs.writeFileSync(outPath, file.data);
-            results.push({
-              path: outPath,
-              filename: outName,
-              mimeType: file.mimeType,
-              data: file.data,
-            });
-            counter++;
+            saveDownloadedFile(file);
           }
         }
 
         if (results.length === 0) {
           // Fallback: scan all outputs
           for (const nodeOutput of Object.values(promptHistory.outputs)) {
-            const files = await downloadOutput(config.serverAddress, nodeOutput);
+            const files = await downloadOutput(config.serverAddress, nodeOutput, signal);
             for (const file of files) {
-              const outName = `paint_${genTimestamp}_${counter}.${file.ext}`;
-              const outPath = path.join(outputDir, outName);
-              fs.writeFileSync(outPath, file.data);
-              results.push({
-                path: outPath,
-                filename: outName,
-                mimeType: file.mimeType,
-                data: file.data,
-              });
-              counter++;
+              saveDownloadedFile(file);
             }
           }
         }
@@ -343,7 +406,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
             content: [
               {
                 type: "text",
-                text: "No images were generated. Check the prompt or workflow variables.",
+                text: "No output files were available. Check the prompt or workflow variables.",
               },
             ],
             details: {
@@ -354,9 +417,32 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           };
         }
 
-        const fileList = results.map((r) => r.path).join("\n");
-        // Generation wall time — stops before image compression / writing to disk.
+        // Generation wall time includes output download and private disk writes,
+        // but excludes the bounded inline-preview processing below.
         const generationElapsedMs = Date.now() - startTime;
+
+        for (const candidate of previewCandidates) {
+          const remainingTotalBytes = config.imageTotalMaxBytes - totalPreviewBytes;
+          if (remainingTotalBytes < 1024) break;
+
+          try {
+            const preview = await compressImageForLLM(
+              candidate.data,
+              config.imageQuality,
+              config.imageMaxDimension,
+              Math.min(config.imageMaxBytes, remainingTotalBytes),
+            );
+            totalPreviewBytes += preview.encodedBytes;
+            inlinePreviews.push({ path: candidate.path, ...preview });
+          } catch (error) {
+            previewFailures.push({
+              path: candidate.path,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        const fileList = results.map((r) => r.path).join("\n");
         const elapsedText =
           generationElapsedMs >= 1000
             ? `${(generationElapsedMs / 1000).toFixed(1)}s`
@@ -379,16 +465,29 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           `Workflow: ${wfName}${bundledMarker}`,
           `⏱️ Generation time: ${elapsedText}`,
         );
+        if (generatedImageCount > 0) {
+          textParts.push(
+            `Inline previews: ${inlinePreviews.length} of ${generatedImageCount} image(s); originals are available at the paths above.`,
+          );
+        }
+        if (previewFailures.length > 0) {
+          textParts.push(
+            `⚠️ ${previewFailures.length} image preview(s) could not be prepared; originals are still available by path.`,
+          );
+        }
         const textContent = textParts.join("\n");
 
-        const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
+        const content: Array<
+          | { type: "text"; text: string }
+          | { type: "image"; data: string; mimeType: string }
+        > = [
           { type: "text", text: textContent },
+          ...inlinePreviews.map((preview) => ({
+            type: "image" as const,
+            data: preview.data,
+            mimeType: preview.mimeType,
+          })),
         ];
-
-        // Generated media is intentionally returned by path only. Do not embed
-        // image/video bytes in tool content: large base64 payloads can exhaust
-        // pi/TUI/provider memory, and hosts may try to decode video bytes as
-        // images when an incompatible content type is used.
 
         return {
           content,
@@ -402,6 +501,10 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
             workflow: path.basename(wfPath),
             workflowPath: wfPath,
             generationElapsedMs,
+            outputDir,
+            removedExpiredOutputDirs: outputStorage.removedExpired,
+            inlinePreviews: inlinePreviews.map(({ data: _data, ...preview }) => preview),
+            ...(previewFailures.length > 0 ? { previewFailures } : {}),
             ...(warnings.length > 0 ? { warnings } : {}),
             uploadedInputs,
             appliedLoras: appliedLoras.applied,

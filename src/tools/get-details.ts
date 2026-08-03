@@ -29,7 +29,7 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
     parameters: {
       workflow: { type: "optional", valueType: "string", description: "The name of the workflow file to inspect (e.g., 'SDXL_example.json'). If omitted, uses the first available workflow." },
     },
-    async execute(params) {
+    async execute(params, signal) {
       try {
         const wfPath = resolveWorkflowPath(
           config.workflowDir,
@@ -48,8 +48,9 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
         const loraMetadata = loadLoraMetadata(wfPath);
         let installedLoras: string[] | undefined;
         try {
-          installedLoras = await getInstalledLoras(config.serverAddress);
-        } catch {
+          installedLoras = await getInstalledLoras(config.serverAddress, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
           installedLoras = undefined;
         }
         const usableLoras = buildUsableLoras(installedLoras, loraMetadata);
@@ -108,6 +109,7 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
           },
         };
       } catch (e) {
+        if (signal?.aborted) throw e;
         return {
           content: [
             { type: "text", text: `Error getting workflow details: ${(e as Error).message}` },

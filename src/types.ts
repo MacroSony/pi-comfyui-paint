@@ -2,12 +2,6 @@
  * Shared types for pi-comfyui-paint.
  */
 
-/** Callback for streaming progress updates during tool execution. */
-export type OnUpdate = (update: {
-  content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-  details?: unknown;
-}) => void;
-
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 export interface PaintConfig {
@@ -15,12 +9,21 @@ export interface PaintConfig {
   workflowDir: string;
   projectWorkflowDir: string;
   bundledWorkflowDir: string;
+  outputDir: string;
+  outputDirIsDefault: boolean;
+  outputRetentionHours: number;
   clientId: string;
   interruptOnAbort: boolean;
-  /** JPEG quality 1-100 for images sent to the LLM. 0 = no compression (raw PNG). */
+  /** Maximum number of generated images included as inline model previews. */
+  inlineImageLimit: number;
+  /** Initial JPEG quality, 1-100, for inline model previews. */
   imageQuality: number;
-  /** Max pixels on the longest side when resizing images for the LLM. 0 = no resize. */
+  /** Maximum pixels on the longest side for inline model previews. */
   imageMaxDimension: number;
+  /** Maximum base64-encoded bytes for one inline image preview. */
+  imageMaxBytes: number;
+  /** Maximum base64-encoded bytes across all inline previews in one result. */
+  imageTotalMaxBytes: number;
 }
 
 // ─── Workflow ────────────────────────────────────────────────────────────────
@@ -70,8 +73,8 @@ export interface ParsedWorkflow {
   notes: string;
   variables: Record<string, unknown>;
   outputTypes: Record<string, string>;
-  inputSlots: Record<number, { keys: string[]; expectedType: string }>;
-  fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string }>;
+  inputSlots: Record<number, { keys: string[]; expectedType: string; optional?: boolean }>;
+  fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string; optional?: boolean }>;
   loraSlots: LoraSlot[];
   rawVars: WorkflowVariables;
 }
@@ -125,7 +128,17 @@ export interface GenerationResult {
   path: string;
   filename: string;
   mimeType: string;
-  data: Buffer;
+}
+
+export interface InlineImagePreview {
+  path: string;
+  mimeType: string;
+  data: string;
+  encodedBytes: number;
+  originalWidth?: number;
+  originalHeight?: number;
+  width?: number;
+  height?: number;
 }
 
 export interface UploadedInput {

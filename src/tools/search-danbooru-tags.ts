@@ -209,7 +209,7 @@ export function buildRelatedTagsUrl(
   return `${DANBOORU_BASE}/related_tag.json?${params}`;
 }
 
-async function fetchDanbooruJson(url: string): Promise<{
+async function fetchDanbooruJson(url: string, signal?: AbortSignal): Promise<{
   data?: unknown;
   error?: string;
   status?: number;
@@ -217,18 +217,24 @@ async function fetchDanbooruJson(url: string): Promise<{
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": USER_AGENT },
+      signal,
     });
     if (!res.ok) {
       return { error: `HTTP ${res.status}: ${await res.text()}`, status: res.status };
     }
     return { data: await res.json(), status: res.status };
   } catch (error) {
+    if (signal?.aborted) throw error;
     return { error: formatFetchError(error) };
   }
 }
 
-async function searchTags(query: string, limit: number): Promise<TagSearchResult> {
-  const result = await fetchDanbooruJson(buildTagSearchUrl(query, limit));
+async function searchTags(
+  query: string,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<TagSearchResult> {
+  const result = await fetchDanbooruJson(buildTagSearchUrl(query, limit), signal);
   if (result.error) return { tags: [], error: result.error, status: result.status };
 
   const tags = Array.isArray(result.data)
@@ -242,12 +248,16 @@ function findExactTag(query: string, tags: DanbooruTag[]): DanbooruTag | undefin
   return tags.find((tag) => tag.name.toLowerCase() === exactName);
 }
 
-async function checkExactTag(query: string, knownTags: DanbooruTag[] = []): Promise<ExactTagCheck> {
+async function checkExactTag(
+  query: string,
+  knownTags: DanbooruTag[] = [],
+  signal?: AbortSignal,
+): Promise<ExactTagCheck> {
   const checkedName = canonicalTagName(query);
   const known = findExactTag(query, knownTags);
   if (known) return { checkedName, tag: known };
 
-  const result = await fetchDanbooruJson(buildExactTagUrl(query));
+  const result = await fetchDanbooruJson(buildExactTagUrl(query), signal);
   if (result.error) return { checkedName, error: result.error, status: result.status };
 
   const tags = Array.isArray(result.data)
@@ -288,10 +298,14 @@ function pushRequestFailure(lines: string[], error: string, status?: number): vo
   lines.push(`*Danbooru request failed${statusText}: ${error}*`);
 }
 
-async function exactCheckForRelated(query: string, result: RelatedSearchResult): Promise<ExactTagCheck> {
+async function exactCheckForRelated(
+  query: string,
+  result: RelatedSearchResult,
+  signal?: AbortSignal,
+): Promise<ExactTagCheck> {
   const checkedName = canonicalTagName(query);
   if (result.exactTag) return { checkedName, tag: result.exactTag };
-  return checkExactTag(query);
+  return checkExactTag(query, [], signal);
 }
 
 async function searchRelatedTags(
@@ -303,8 +317,9 @@ async function searchRelatedTags(
     searchSampleSize?: unknown;
     tagSampleSize?: unknown;
   },
+  signal?: AbortSignal,
 ): Promise<RelatedSearchResult> {
-  const result = await fetchDanbooruJson(buildRelatedTagsUrl(query, limit, options));
+  const result = await fetchDanbooruJson(buildRelatedTagsUrl(query, limit, options), signal);
   if (result.error) {
     return { query, relatedTags: [], wikiPageTags: [], error: result.error, status: result.status };
   }
@@ -414,7 +429,7 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
       }
       return a;
     },
-    async execute(params) {
+    async execute(params, signal) {
       const queries = Array.isArray(params?.queries)
         ? params.queries.filter((query): query is string => typeof query === "string")
         : [];
@@ -452,7 +467,7 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
             categories: params?.categories,
             searchSampleSize: params?.search_sample_size,
             tagSampleSize: params?.tag_sample_size,
-          });
+          }, signal);
           results[trimmed] = related;
 
           if (related.error) {
@@ -460,7 +475,7 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
             continue;
           }
 
-          const exactCheck = await exactCheckForRelated(trimmed, related);
+          const exactCheck = await exactCheckForRelated(trimmed, related, signal);
           pushExactTagWarning(lines, trimmed, exactCheck, "related");
 
           if (related.postCount != null) {
@@ -484,7 +499,7 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
           continue;
         }
 
-        const tagSearch = await searchTags(trimmed, limit);
+        const tagSearch = await searchTags(trimmed, limit, signal);
         results[trimmed] = tagSearch;
 
         if (tagSearch.error) {
@@ -492,7 +507,7 @@ export function createSearchDanbooruTagsTool(_config: PaintConfig): ToolRegistra
           continue;
         }
 
-        const exactCheck = await checkExactTag(trimmed, tagSearch.tags);
+        const exactCheck = await checkExactTag(trimmed, tagSearch.tags, signal);
         pushExactTagWarning(lines, trimmed, exactCheck, "name");
 
         if (tagSearch.tags.length === 0) {

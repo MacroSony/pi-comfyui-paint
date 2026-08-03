@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { getEventListeners } from "node:events";
 import {
   buildComfyUrl,
   resolveInputFilePath,
@@ -10,6 +11,7 @@ import {
   abortableSleep,
   extractExecutionError,
   pollHistory,
+  downloadOutput,
 } from "../src/comfyui-client.js";
 import type { ComfyUIHistoryOutput } from "../src/types.js";
 
@@ -132,7 +134,36 @@ describe("abortableSleep", () => {
 
     vi.advanceTimersByTime(1000);
     await promise; // should resolve
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
     controller.abort(); // should not throw
+  });
+});
+
+describe("downloadOutput", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("passes the abort signal to output downloads", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        new Response(Buffer.from("image")),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await downloadOutput("http://comfy.test", {
+      images: [{ filename: "x.png", subfolder: "", type: "output" }],
+    }, controller.signal);
+
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ signal: controller.signal });
+  });
+
+  it("surfaces failed output downloads", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("missing", { status: 404 })));
+    await expect(downloadOutput("http://comfy.test", {
+      images: [{ filename: "missing.png", subfolder: "", type: "output" }],
+    })).rejects.toThrow("/view failed for missing.png with 404");
   });
 });
 

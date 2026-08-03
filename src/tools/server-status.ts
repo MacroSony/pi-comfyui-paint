@@ -4,7 +4,7 @@
 
 import * as fs from "node:fs";
 import { comfyFetch } from "../comfyui-client.js";
-import { isWorkflowJsonFile } from "../workflow.js";
+import { listAvailableWorkflowFiles } from "../workflow.js";
 import type { PaintConfig } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
@@ -20,16 +20,24 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
       "Use paint_server_status to debug connectivity issues before generating images — it reports whether ComfyUI is reachable, which workflow directory is active, and the current queue state.",
     ],
     parameters: {},
-    async execute() {
+    async execute(_params, signal) {
       const workflowDirExists = fs.existsSync(config.workflowDir);
-      const workflows = workflowDirExists
-        ? fs.readdirSync(config.workflowDir).filter(isWorkflowJsonFile).sort()
-        : [];
+      const availableWorkflows = listAvailableWorkflowFiles(
+        config.workflowDir,
+        config.bundledWorkflowDir,
+      );
+      const workflows = availableWorkflows.map((entry) => entry.name);
+      const bundledWorkflows = availableWorkflows
+        .filter((entry) => entry.bundled)
+        .map((entry) => entry.name);
 
       const queueResult = await Promise.allSettled([
-        comfyFetch(config.serverAddress, "/queue"),
-        comfyFetch(config.serverAddress, "/system_stats"),
+        comfyFetch(config.serverAddress, "/queue", { signal }),
+        comfyFetch(config.serverAddress, "/system_stats", { signal }),
       ]);
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error("Operation aborted");
+      }
 
       const queueEntry = queueResult[0];
       const statsEntry = queueResult[1];
@@ -47,10 +55,14 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
         `Project workflow directory: ${config.projectWorkflowDir}`,
         `Bundled workflow directory: ${config.bundledWorkflowDir}`,
         `Active workflow directory exists: ${workflowDirExists ? "yes" : "no"}`,
-        `Workflow count: ${workflows.length}`,
+        `Effective workflow count: ${workflows.length} (${bundledWorkflows.length} bundled fallback)`,
+        `Output directory: ${config.outputDir}`,
+        `Output retention: ${config.outputRetentionHours === 0 ? "disabled" : `${config.outputRetentionHours}h`}`,
         `Interrupt on abort: ${config.interruptOnAbort ? "enabled" : "disabled"}`,
-        `Image quality (LLM): ${config.imageQuality === 0 ? "raw PNG (no compression)" : `JPEG q${config.imageQuality}`}`,
-        `Image max dimension (LLM): ${config.imageMaxDimension === 0 ? "no resize" : `${config.imageMaxDimension}px`}`,
+        `Inline image previews: up to ${config.inlineImageLimit}`,
+        `Inline image quality: JPEG q${config.imageQuality}`,
+        `Inline image max dimension: ${config.imageMaxDimension}px`,
+        `Inline image max bytes: ${config.imageMaxBytes} each / ${config.imageTotalMaxBytes} total`,
       ];
 
       if (queue) {
@@ -74,9 +86,16 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
           bundledWorkflowDir: config.bundledWorkflowDir,
           workflowDirExists,
           workflows,
+          bundledWorkflows,
+          outputDir: config.outputDir,
+          outputDirIsDefault: config.outputDirIsDefault,
+          outputRetentionHours: config.outputRetentionHours,
           interruptOnAbort: config.interruptOnAbort,
+          inlineImageLimit: config.inlineImageLimit,
           imageQuality: config.imageQuality,
           imageMaxDimension: config.imageMaxDimension,
+          imageMaxBytes: config.imageMaxBytes,
+          imageTotalMaxBytes: config.imageTotalMaxBytes,
           queue,
           systemStats: statsEntry.status === "fulfilled" ? statsEntry.value : undefined,
         },

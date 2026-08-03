@@ -137,7 +137,13 @@ const OBJECT_INFO_TTL_MS = 60_000;
  * Multiple tools query it; avoid re-fetching a potentially large response
  * when several are called in the same flow.
  */
-export async function getObjectInfo(server: string): Promise<Record<string, unknown>> {
+export async function getObjectInfo(
+  server: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error("Operation aborted");
+  }
   if (
     objectInfoCache &&
     objectInfoCache.server === server &&
@@ -145,7 +151,7 @@ export async function getObjectInfo(server: string): Promise<Record<string, unkn
   ) {
     return objectInfoCache.data;
   }
-  const data = (await comfyFetch(server, "/object_info")) as Record<string, unknown>;
+  const data = (await comfyFetch(server, "/object_info", { signal })) as Record<string, unknown>;
   objectInfoCache = { server, at: Date.now(), data };
   return data;
 }
@@ -188,7 +194,11 @@ export async function uploadInputFile(
 export async function downloadOutput(
   server: string,
   nodeOutput: Record<string, Array<{ filename: string; subfolder: string; type: string }>>,
+  signal?: AbortSignal,
 ): Promise<DownloadedOutput[]> {
+  if (signal?.aborted) {
+    throw signal.reason instanceof Error ? signal.reason : new Error("Operation aborted");
+  }
   const results: DownloadedOutput[] = [];
 
   for (const value of Object.values(nodeOutput)) {
@@ -201,8 +211,12 @@ export async function downloadOutput(
         subfolder: item.subfolder,
         type: item.type,
       });
-      const res = await fetch(buildComfyUrl(server, `/view?${params}`));
-      if (!res.ok) continue;
+      const res = await fetch(buildComfyUrl(server, `/view?${params}`), { signal });
+      if (!res.ok) {
+        throw new Error(
+          `ComfyUI /view failed for ${item.filename} with ${res.status}: ${await res.text()}`,
+        );
+      }
 
       const buf = Buffer.from(await res.arrayBuffer());
       const ext = path.extname(item.filename).replace(".", "").toLowerCase() || "png";
@@ -237,14 +251,14 @@ export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> 
       return;
     }
 
-    const timeout = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        reject(new Error("Paint cancelled"));
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new Error("Paint cancelled"));
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
