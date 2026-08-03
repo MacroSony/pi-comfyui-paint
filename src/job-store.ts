@@ -19,12 +19,14 @@ const JOB_ID_PATTERN = /^[A-Za-z0-9-]+$/;
 const TERMINAL_STATES = new Set<PaintJobState>(["completed", "failed", "cancelled"]);
 
 export interface CreateJobInput {
+  id?: string;
   backend: ComfyBackend;
   clientId: string;
   workflow: string;
   workflowPath: string;
   promptWorkflow: Record<string, unknown>;
   outputNodeIds: string[];
+  outputPrefix?: string;
   prompt?: string;
   negativePrompt?: string;
   variables?: Record<string, unknown>;
@@ -76,8 +78,18 @@ export function hashWorkflow(workflow: Record<string, unknown>): string {
   return crypto.createHash("sha256").update(JSON.stringify(workflow)).digest("hex");
 }
 
+/** Generate a short agent-friendly job ID. Timestamp IDs are UTC and sortable. */
+export function generatePaintJobId(
+  style: "timestamp" | "uuid" = "timestamp",
+  now = new Date(),
+): string {
+  if (style === "uuid") return crypto.randomUUID();
+  const timestamp = now.toISOString().replace(/^(-?\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\..*$/, "$1$2$3-$4$5$6Z");
+  return `${timestamp}-${crypto.randomBytes(3).toString("hex")}`;
+}
+
 export function createJob(config: PaintConfig, input: CreateJobInput): PaintJobRecord {
-  const id = crypto.randomUUID();
+  const id = input.id ?? generatePaintJobId(config.jobIdStyle);
   const storage = createJobOutputDir(
     config.outputDir,
     id,
@@ -102,6 +114,7 @@ export function createJob(config: PaintConfig, input: CreateJobInput): PaintJobR
     workflowSnapshotPath,
     outputDir: storage.outputDir,
     outputNodeIds: input.outputNodeIds,
+    outputPrefix: input.outputPrefix,
     prompt: input.prompt,
     negativePrompt: input.negativePrompt,
     variables: input.variables,

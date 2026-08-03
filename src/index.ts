@@ -3,7 +3,7 @@
  *
  * Connects to a ComfyUI server for image/video generation.
  *
- * Configuration (env vars or defaults):
+ * Configuration (env vars, optional comfyui-paint.json files, or defaults):
  *   COMFYUI_URL                 - ComfyUI base URL (default: http://127.0.0.1:8188)
  *   COMFYUI_BACKENDS            - Named backends: id=url,id=url (overrides COMFYUI_URL)
  *   COMFYUI_WORKFLOW_DIR        - Workflow JSON folder
@@ -16,6 +16,9 @@
  *   COMFYUI_IMAGE_MAX_DIMENSION - Preview longest-side limit (default: 2000)
  *   COMFYUI_IMAGE_MAX_BYTES     - Per-preview base64 byte limit (default: 4.5 MiB)
  *   COMFYUI_IMAGE_TOTAL_MAX_BYTES - Total preview base64 byte limit (default: 8 MiB)
+ *   COMFYUI_JOB_ID_STYLE        - timestamp (default) or uuid
+ *   COMFYUI_BACKEND_OUTPUT_DIRS - Optional local output dirs: id=/path,id=/path
+ *   COMFYUI_RECONCILE_INTERVAL_SECONDS - Background job sweep interval (default: 30; 0 disables)
  *
  * Registers 10 tools:
  *   paint_list_workflows  paint_get_details       paint_validate_workflow
@@ -27,6 +30,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "typebox";
 import { getConfig } from "./config.js";
+import { isTerminalJobState, listJobs } from "./job-store.js";
+import { reconcileJob } from "./job-runner.js";
 import { createListWorkflowsTool } from "./tools/list-workflows.js";
 import { createGetDetailsTool } from "./tools/get-details.js";
 import { createValidateWorkflowTool } from "./tools/validate-workflow.js";
@@ -73,6 +78,26 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  let reconcileTimer: NodeJS.Timeout | undefined;
+  let reconcileRunning = false;
+  const reconcileSweep = async (): Promise<void> => {
+    if (reconcileRunning || config.reconcileIntervalMs === 0) return;
+    reconcileRunning = true;
+    try {
+      for (const job of listJobs(config.outputDir, 100)) {
+        if (isTerminalJobState(job.state)) continue;
+        try {
+          await reconcileJob(config, job);
+        } catch {
+          // Background reconciliation is best-effort; explicit paint_job_status
+          // still surfaces the retryable error to the caller.
+        }
+      }
+    } finally {
+      reconcileRunning = false;
+    }
+  };
+
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.hasUI) {
       ctx.ui.notify(
@@ -80,6 +105,18 @@ export default function (pi: ExtensionAPI) {
         "info",
       );
     }
+    if (config.reconcileIntervalMs > 0 && !reconcileTimer) {
+      reconcileTimer = setInterval(() => {
+        void reconcileSweep();
+      }, config.reconcileIntervalMs);
+      reconcileTimer.unref?.();
+      void reconcileSweep();
+    }
+  });
+
+  pi.on("session_shutdown", async () => {
+    if (reconcileTimer) clearInterval(reconcileTimer);
+    reconcileTimer = undefined;
   });
 }
 

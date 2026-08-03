@@ -28,7 +28,19 @@ export interface PaintConfig {
   imageMaxBytes: number;
   /** Maximum base64-encoded bytes across all inline previews in one result. */
   imageTotalMaxBytes: number;
+  /** Durable job ID generator style. Timestamp IDs are short and chronologically sortable. */
+  jobIdStyle: PaintJobIdStyle;
+  /** Optional local/mounted ComfyUI output directories keyed by backend ID. */
+  backendOutputDirs?: Record<string, string>;
+  /** Background reconciliation interval in milliseconds; 0 disables the sweeper. */
+  reconcileIntervalMs: number;
+  /** JSON config files that contributed to this effective config. */
+  configFiles: string[];
+  projectConfigPath: string;
+  globalConfigPath: string;
 }
+
+export type PaintJobIdStyle = "timestamp" | "uuid";
 
 export interface ComfyBackend {
   id: string;
@@ -194,6 +206,10 @@ export interface PaintJobRecord {
   workflowSnapshotPath: string;
   outputDir: string;
   outputNodeIds: string[];
+  /** Server-side output prefix rewritten into Save nodes for deterministic recovery. */
+  outputPrefix?: string;
+  /** ComfyUI output metadata captured before download; survives history loss. */
+  outputManifest?: Record<string, Record<string, ComfyUIOutputItem[]>>;
   prompt?: string;
   negativePrompt?: string;
   variables?: Record<string, unknown>;

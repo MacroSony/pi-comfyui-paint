@@ -120,6 +120,9 @@ describe("getConfig", () => {
     delete process.env.COMFYUI_IMAGE_MAX_DIMENSION;
     delete process.env.COMFYUI_IMAGE_MAX_BYTES;
     delete process.env.COMFYUI_IMAGE_TOTAL_MAX_BYTES;
+    delete process.env.COMFYUI_JOB_ID_STYLE;
+    delete process.env.COMFYUI_BACKEND_OUTPUT_DIRS;
+    delete process.env.COMFYUI_RECONCILE_INTERVAL_SECONDS;
   });
 
   afterEach(() => {
@@ -140,6 +143,9 @@ describe("getConfig", () => {
     expect(config.imageMaxDimension).toBe(2000);
     expect(config.imageMaxBytes).toBe(Math.floor(4.5 * 1024 * 1024));
     expect(config.imageTotalMaxBytes).toBe(8 * 1024 * 1024);
+    expect(config.jobIdStyle).toBe("timestamp");
+    expect(config.reconcileIntervalMs).toBe(30_000);
+    expect(config.configFiles).toEqual([]);
     expect(config.clientId).toMatch(/^pi-paint-/);
     expect(config.projectWorkflowDir).toContain("test-project/.pi/comfyui_workflows");
   });
@@ -270,6 +276,60 @@ describe("getConfig", () => {
       const config = getConfig(projectDir);
       expect(config.projectWorkflowDir).toBe(workflowDir);
       expect(config.workflowDir).toBe(workflowDir);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads project comfyui-paint.json and resolves paths from the project root", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-config-"));
+    process.env.HOME = projectDir;
+    fs.mkdirSync(path.join(projectDir, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, ".pi", "comfyui-paint.json"),
+      JSON.stringify({
+        backends: [{ id: "gpu", url: "gpu:8188" }],
+        outputDir: "artifacts/paint",
+        syncTimeoutSeconds: 42,
+        interruptOnAbort: true,
+        jobIdStyle: "uuid",
+        backendOutputDirs: { gpu: "ComfyUI/output" },
+      }),
+    );
+
+    try {
+      const { getConfig } = await import("../src/config.js");
+      const config = getConfig(projectDir);
+      expect(config.backends).toEqual([{ id: "gpu", url: "http://gpu:8188" }]);
+      expect(config.outputDir).toBe(path.join(projectDir, "artifacts/paint"));
+      expect(config.syncTimeoutMs).toBe(42_000);
+      expect(config.interruptOnAbort).toBe(true);
+      expect(config.jobIdStyle).toBe("uuid");
+      expect(config.backendOutputDirs).toEqual({ gpu: path.join(projectDir, "ComfyUI/output") });
+      expect(config.configFiles).toEqual([path.join(projectDir, ".pi", "comfyui-paint.json")]);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets env vars override comfyui-paint.json", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-comfyui-paint-config-"));
+    process.env.HOME = projectDir;
+    fs.mkdirSync(path.join(projectDir, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, ".pi", "comfyui-paint.json"),
+      JSON.stringify({ outputDir: "from-file", syncTimeoutSeconds: 42, jobIdStyle: "uuid" }),
+    );
+    process.env.COMFYUI_OUTPUT_DIR = "from-env";
+    process.env.COMFYUI_SYNC_TIMEOUT_SECONDS = "7";
+    process.env.COMFYUI_JOB_ID_STYLE = "timestamp";
+
+    try {
+      const { getConfig } = await import("../src/config.js");
+      const config = getConfig(projectDir);
+      expect(config.outputDir).toBe(path.join(projectDir, "from-env"));
+      expect(config.syncTimeoutMs).toBe(7_000);
+      expect(config.jobIdStyle).toBe("timestamp");
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

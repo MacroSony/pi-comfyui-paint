@@ -1,8 +1,10 @@
 /** Submit, reconcile, finalize, format, and cancel durable paint jobs. */
 
 import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   cancelPromptAtomically,
+  collectOutputItems,
   comfyFetch,
   deleteQueuedPrompt,
   downloadOutputsToDirectory,
@@ -25,6 +27,50 @@ const finalizationLocks = new Map<string, Promise<PaintJobRecord>>();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function manifestHasItems(
+  manifest: Record<string, Record<string, ComfyUIOutputItem[]>> | undefined,
+): manifest is Record<string, Record<string, ComfyUIOutputItem[]>> {
+  return Boolean(
+    manifest && Object.values(manifest).some((nodeOutput) => collectOutputItems(nodeOutput).length > 0),
+  );
+}
+
+function scopedBackendOutputRoot(config: PaintConfig, job: PaintJobRecord): string | undefined {
+  const configured = config.backendOutputDirs?.[job.backend.id];
+  if (!configured || !job.outputPrefix) return undefined;
+  const root = path.resolve(configured);
+  const scoped = path.resolve(root, ...job.outputPrefix.split("/"));
+  return scoped === root || scoped.startsWith(`${root}${path.sep}`) ? scoped : undefined;
+}
+
+/** Build a synthetic manifest from job-scoped files in a configured local/mounted ComfyUI output dir. */
+function recoverManifestFromBackendOutput(
+  config: PaintConfig,
+  job: PaintJobRecord,
+): Record<string, Record<string, ComfyUIOutputItem[]>> | undefined {
+  const scopedRoot = scopedBackendOutputRoot(config, job);
+  if (!scopedRoot || !fs.existsSync(scopedRoot)) return undefined;
+  const backendRoot = path.resolve(config.backendOutputDirs![job.backend.id]);
+  const items: ComfyUIOutputItem[] = [];
+
+  const visit = (directory: string): void => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(candidate);
+      } else if (entry.isFile() && !entry.name.endsWith(".part") && !entry.name.startsWith(".")) {
+        const relative = path.relative(backendRoot, candidate).split(path.sep).join("/");
+        const subfolder = path.dirname(relative) === "." ? "" : path.dirname(relative).split(path.sep).join("/");
+        items.push({ filename: entry.name, subfolder, type: "output" });
+      }
+    }
+  };
+  visit(scopedRoot);
+  if (items.length === 0) return undefined;
+  items.sort((a, b) => `${a.subfolder}/${a.filename}`.localeCompare(`${b.subfolder}/${b.filename}`));
+  return { recovered: { files: items } };
 }
 
 function selectNodeOutputs(
@@ -51,9 +97,15 @@ async function finalizeUnlocked(
     return job;
   }
 
-  job = updateJob(job, { state: "finalizing", error: undefined, diagnostic: undefined });
+  const outputManifest = promptHistory.outputs ?? {};
+  job = updateJob(job, {
+    state: "finalizing",
+    outputManifest,
+    error: undefined,
+    diagnostic: undefined,
+  });
   try {
-    const selected = selectNodeOutputs(job, promptHistory.outputs ?? {});
+    const selected = selectNodeOutputs(job, outputManifest);
     let files = await downloadOutputsToDirectory(
       job.backend.url,
       selected.nodeOutputs,
@@ -63,7 +115,7 @@ async function finalizeUnlocked(
     if (files.length === 0 && selected.usedTagged) {
       files = await downloadOutputsToDirectory(
         job.backend.url,
-        Object.values(promptHistory.outputs ?? {}),
+        Object.values(outputManifest),
         job.outputDir,
         signal,
       );
@@ -137,11 +189,25 @@ export async function reconcileJob(
     return finalizeJob(config, job, promptHistory, signal);
   }
 
+  if (manifestHasItems(job.outputManifest)) {
+    return finalizeJob(config, job, { outputs: job.outputManifest }, signal);
+  }
+
   const queue = await getQueueStatus(job.backend.url, signal);
   const queueState = findPromptInQueue(queue, promptId);
   if (queueState) {
     return updateJob(job, { state: queueState, diagnostic: undefined });
   }
+
+  const recoveredManifest = recoverManifestFromBackendOutput(config, job);
+  if (recoveredManifest) {
+    job = updateJob(job, {
+      outputManifest: recoveredManifest,
+      diagnostic: "Recovered output metadata from the configured backend output directory after ComfyUI history was lost.",
+    });
+    return finalizeJob(config, job, { outputs: recoveredManifest }, signal);
+  }
+
   return updateJob(job, {
     state: "unknown",
     diagnostic: "Prompt is absent from both ComfyUI history and its current queue.",

@@ -24,7 +24,32 @@ export function createJobStatusTool(config: PaintConfig): ToolRegistration {
       const jobId = params?.job_id as string | undefined;
       if (jobId) {
         let job = loadJob(config.outputDir, jobId);
-        job = await reconcileJob(config, job, signal);
+        try {
+          job = await reconcileJob(config, job, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Paint job ${job.id} is temporarily unavailable: ${message}\n` +
+                  `State: ${job.state}\n` +
+                  `Backend: ${job.backend.id} (${job.backend.url})\n` +
+                  "The durable job record was left unchanged; retry paint_job_status after the backend recovers.",
+              },
+            ],
+            details: {
+              jobId: job.id,
+              state: job.state,
+              backend: job.backend,
+              promptId: job.promptId,
+              retryable: true,
+              error: message,
+            },
+          };
+        }
         return formatJobResult(config, job);
       }
 

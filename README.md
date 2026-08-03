@@ -24,32 +24,66 @@ pi install git:github.com/MacroSony/pi-comfyui-paint@v0.2.0
 
 ## Configuration
 
-| Env var | Default | Description |
-|---------|---------|-------------|
-| `COMFYUI_URL` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
-| `COMFYUI_BACKENDS` | (unset) | Named ComfyUI backends in `id=url,id=url` form. When set, this replaces `COMFYUI_URL` for generation and enables least-queued direct assignment. |
-| `COMFYUI_WORKFLOW_DIR` | (auto) | Custom workflow directory |
-| `COMFYUI_OUTPUT_DIR` | `<temp>/pi-comfyui-paint-<user>` | Root for private job records and output folders. Relative paths are resolved from the project directory. Use a persistent location when job recovery must survive OS temp cleanup. |
-| `COMFYUI_OUTPUT_RETENTION_HOURS` | `168` | Delete terminal extension-managed jobs/outputs after this many hours. Active and uncertain jobs are retained. Set to `0` to disable extension cleanup. |
-| `COMFYUI_SYNC_TIMEOUT_SECONDS` | `600` | Maximum synchronous wait. On timeout, ComfyUI keeps running and `paint` returns a durable job ID instead of losing the generation. |
-| `COMFYUI_INTERRUPT_ON_ABORT` | off | Set to `1`, `true`, `yes`, or `on` to attempt targeted job cancellation when a synchronous `paint` call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI continues running. |
-| `COMFYUI_INLINE_IMAGE_LIMIT` | `1` | Number of generated images returned to the model as inline previews. Clamped to 0–4; set to `0` for path-only results. |
-| `COMFYUI_IMAGE_QUALITY` | `80` | Initial JPEG quality for inline previews, clamped to 1–100. Quality and dimensions are reduced further when needed to meet byte limits. |
-| `COMFYUI_IMAGE_MAX_DIMENSION` | `2000` | Maximum width or height of an inline preview. |
-| `COMFYUI_IMAGE_MAX_BYTES` | `4718592` | Maximum base64-encoded bytes for one inline preview (4.5 MiB). |
-| `COMFYUI_IMAGE_TOTAL_MAX_BYTES` | `8388608` | Maximum base64-encoded bytes across all previews returned by one `paint` call (8 MiB). |
+Configuration is resolved in this order (highest priority first):
+
+1. `COMFYUI_*` environment variables
+2. Project config: `<project>/.pi/comfyui-paint.json`
+3. Global config: `~/.pi/agent/comfyui-paint.json`
+4. Defaults
+
+JSON config keys use camelCase equivalents, for example:
+
+```json
+{
+  "backends": [
+    { "id": "gpu-a", "url": "http://127.0.0.1:8188" },
+    { "id": "gpu-b", "url": "http://127.0.0.1:8189" }
+  ],
+  "outputDir": ".pi/paint-jobs",
+  "syncTimeoutSeconds": 600,
+  "interruptOnAbort": false,
+  "jobIdStyle": "timestamp",
+  "reconcileIntervalSeconds": 30,
+  "backendOutputDirs": {
+    "gpu-a": "/home/me/ComfyUI/output",
+    "gpu-b": "/home/me/ComfyUI/output"
+  }
+}
+```
+
+Relative paths in a project config resolve from the project root; relative paths in the global config resolve from the user home directory. Environment variables remain the override mechanism for one-off runs.
+
+| Env var | JSON key | Default | Description |
+|---------|----------|---------|-------------|
+| `COMFYUI_URL` | `url` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
+| `COMFYUI_BACKENDS` | `backends` | (unset) | Named ComfyUI backends in `id=url,id=url` form, or a JSON `[{id,url}]` array. When set, this replaces `COMFYUI_URL` for generation and enables least-queued direct assignment. |
+| `COMFYUI_WORKFLOW_DIR` | `workflowDir` | (auto) | Custom workflow directory |
+| `COMFYUI_OUTPUT_DIR` | `outputDir` | `<temp>/pi-comfyui-paint-<user>` | Root for private job records and output folders. Relative paths are resolved from the project directory. Use a persistent location when job recovery must survive OS temp cleanup. |
+| `COMFYUI_OUTPUT_RETENTION_HOURS` | `outputRetentionHours` | `168` | Delete terminal extension-managed jobs/outputs after this many hours. Active and uncertain jobs are retained. Set to `0` to disable extension cleanup. |
+| `COMFYUI_SYNC_TIMEOUT_SECONDS` | `syncTimeoutSeconds` | `600` | Maximum synchronous wait. On timeout, ComfyUI keeps running and `paint` returns a durable job ID instead of losing the generation. |
+| `COMFYUI_INTERRUPT_ON_ABORT` | `interruptOnAbort` | off | Set to `1`, `true`, `yes`, or `on` to attempt targeted job cancellation when a synchronous `paint` call is cancelled. By default, cancellation only stops Pi from polling; ComfyUI continues running. |
+| `COMFYUI_INLINE_IMAGE_LIMIT` | `inlineImageLimit` | `1` | Number of generated images returned to the model as inline previews. Clamped to 0–4; set to `0` for path-only results. |
+| `COMFYUI_IMAGE_QUALITY` | `imageQuality` | `80` | Initial JPEG quality for inline previews, clamped to 1–100. Quality and dimensions are reduced further when needed to meet byte limits. |
+| `COMFYUI_IMAGE_MAX_DIMENSION` | `imageMaxDimension` | `2000` | Maximum width or height of an inline preview. |
+| `COMFYUI_IMAGE_MAX_BYTES` | `imageMaxBytes` | `4718592` | Maximum base64-encoded bytes for one inline preview (4.5 MiB). |
+| `COMFYUI_IMAGE_TOTAL_MAX_BYTES` | `imageTotalMaxBytes` | `8388608` | Maximum base64-encoded bytes across all previews returned by one `paint` call (8 MiB). |
+| `COMFYUI_JOB_ID_STYLE` | `jobIdStyle` | `timestamp` | Durable job ID format: `timestamp` (`YYYYMMDD-HHMMSSZ-xxxxxx`) or legacy `uuid`. |
+| `COMFYUI_BACKEND_OUTPUT_DIRS` | `backendOutputDirs` | (unset) | Optional local/mounted ComfyUI output directories in `id=/path,id=/path` form, used to recover job-scoped outputs if ComfyUI history is lost. |
+| `COMFYUI_RECONCILE_INTERVAL_SECONDS` | `reconcileIntervalSeconds` | `30` | Background sweep interval for non-terminal durable jobs. Set to `0` to disable the sweeper. |
 
 Every generated original is returned by local path. Up to the configured number of image outputs are also returned as bounded JPEG previews so the agent can inspect them without another `read` call. Videos and other non-image outputs are path-only. Preview processing never modifies the originals and does not make an otherwise successful generation fail.
 
-The default output root is user-specific and private. Each job uses a random subdirectory with user-only directory/file permissions where the platform supports POSIX modes. Paths are temporary by default; configure `COMFYUI_OUTPUT_DIR` for durable recovery across OS temp cleanup.
+The default output root is user-specific and private. Each job uses a short timestamped subdirectory with user-only directory/file permissions where the platform supports POSIX modes. Paths are temporary by default; configure `COMFYUI_OUTPUT_DIR` or `outputDir` for durable recovery across OS temp cleanup.
 
 ## Background Jobs
 
 Pass `background: true` to `paint` for long generations such as H3 video workflows. The tool returns after ComfyUI accepts the prompt, including a durable `jobId` and the assigned backend. The accepted prompt lives in ComfyUI's native queue and continues if Pi exits.
 
-Use `paint_job_status` with the job ID to check progress. Once ComfyUI finishes, that tool streams outputs to private local files and returns bounded inline previews for images. Repeated status calls reuse already-downloaded files. `paint_job_cancel` uses ComfyUI's atomic per-job cancellation API when available. On older backends it can safely remove pending prompts, but it deliberately leaves running work alone because the legacy `/interrupt` endpoint is backend-wide; `paint_interrupt` remains the explicit escape hatch.
+Use `paint_job_status` with the job ID to check progress. Once ComfyUI finishes, that tool persists an output manifest before streaming outputs to private local files. Repeated status calls reuse already-downloaded files. If ComfyUI's in-memory history is lost after a restart, the saved manifest can still drive `/view` downloads. New jobs also write server outputs under a job-scoped `paint/<jobId>/` prefix; with `backendOutputDirs` configured for local or mounted backends, status can rebuild a manifest from that prefix even if no manifest was captured in time.
 
-Job recovery depends on the assigned ComfyUI backend retaining its queue/history and output files. Submission failures with an uncertain outcome are recorded but never retried automatically, preventing duplicate expensive generations.
+A background reconciler also sweeps non-terminal jobs every `reconcileIntervalSeconds` while Pi is running. This shrinks the window between ComfyUI completion and manifest persistence. `paint_job_cancel` uses ComfyUI's atomic per-job cancellation API when available. On older backends it can safely remove pending prompts, but it deliberately leaves running work alone because the legacy `/interrupt` endpoint is backend-wide; `paint_interrupt` remains the explicit escape hatch.
+
+Submission failures with an uncertain outcome are recorded but never retried automatically, preventing duplicate expensive generations.
 
 ## Multiple Backends
 
@@ -67,7 +101,7 @@ Automatic selection initially assumes the backends have compatible models, custo
 
 Workflows are resolved in this order:
 
-1. `COMFYUI_WORKFLOW_DIR` env var (if set)
+1. `COMFYUI_WORKFLOW_DIR` env var or `workflowDir` JSON config (if set)
 2. `.pi/comfyui_workflows/` in your project root
 3. `workflows/` bundled with this package (per-file fallback)
 

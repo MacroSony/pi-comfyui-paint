@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   least-queued selection, local submission reservations, round-robin ties, and
   explicit backend overrides.
 - CI tests both the lockfile Pi API baseline and the latest published Pi API.
+- Optional global/project `comfyui-paint.json` configuration with env-var
+  overrides, including named backends and local backend output directories.
+- Short timestamp job IDs by default, with legacy UUID IDs available through
+  `COMFYUI_JOB_ID_STYLE=uuid` or `jobIdStyle: "uuid"`.
+- Durable output manifests are persisted before downloads, and new jobs scope
+  ComfyUI Save-node prefixes under `paint/<jobId>/` for deterministic recovery.
+- A configurable background reconciler periodically captures manifests and
+  retrieves completed outputs without waiting for a manual status call.
 
 ### Changed
 
@@ -42,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Job cancellation uses ComfyUI's atomic targeted endpoint when available.
   Legacy backends can still remove pending prompts, but running jobs are not
   subjected to a race-prone backend-wide interrupt.
+- Job status now reports temporarily unreachable backends as retryable
+  diagnostics without mutating the persisted job state.
 
 ### Fixed
 
@@ -56,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently ignoring them.
 - Retryable output-download failures no longer discard an otherwise completed
   ComfyUI generation, and ambiguous submissions are never retried automatically.
+- Completed outputs can be recovered after ComfyUI history loss from the saved
+  manifest or, for local/mounted backends, from the job-scoped output prefix.
 
 ### Security
 

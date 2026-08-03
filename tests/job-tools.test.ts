@@ -42,6 +42,11 @@ describe("durable job tools", () => {
       imageMaxDimension: 2000,
       imageMaxBytes: 4_718_592,
       imageTotalMaxBytes: 8_388_608,
+      jobIdStyle: "timestamp",
+      reconcileIntervalMs: 30_000,
+      configFiles: [],
+      projectConfigPath: path.join(root, ".pi", "comfyui-paint.json"),
+      globalConfigPath: path.join(root, "global-comfyui-paint.json"),
     };
     let job = createJob(config, {
       backend: config.backends[0],
@@ -137,6 +142,86 @@ describe("durable job tools", () => {
     const retried = await tool.execute({ job_id: job.id }, new AbortController().signal);
     expect(retried.details).toMatchObject({ state: "completed" });
     expect(viewAttempts).toBe(2);
+  });
+
+  it("recovers outputs from the persisted manifest after ComfyUI history is lost", async () => {
+    const { config, job: submitted } = setup();
+    const job = updateJob(submitted, {
+      outputManifest: {
+        "2": {
+          videos: [{ filename: "result.mp4", subfolder: "video", type: "output" }],
+        },
+      },
+    });
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      requests.push(`${url.pathname}${url.search}`);
+      if (url.pathname.startsWith("/history/")) return jsonResponse({});
+      if (url.pathname === "/queue") return jsonResponse({ queue_running: [], queue_pending: [] });
+      if (url.pathname === "/view") {
+        expect(url.searchParams.get("filename")).toBe("result.mp4");
+        expect(url.searchParams.get("subfolder")).toBe("video");
+        return new Response(Buffer.from("recovered video"));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const result = await createJobStatusTool(config).execute(
+      { job_id: job.id },
+      new AbortController().signal,
+    );
+    expect(result.details).toMatchObject({ state: "completed" });
+    const recovered = loadJob(config.outputDir, job.id);
+    expect(recovered.files).toHaveLength(1);
+    expect(fs.readFileSync(recovered.files[0].path, "utf-8")).toBe("recovered video");
+    expect(requests.filter((request) => request.startsWith("/view"))).toHaveLength(1);
+  });
+
+  it("rebuilds a manifest from a configured backend output directory when history is empty", async () => {
+    const { config, job: submitted } = setup();
+    const backendOutput = path.join(config.outputDir, "comfy-output");
+    config.backendOutputDirs = { "gpu-a": backendOutput };
+    const job = updateJob(submitted, { outputPrefix: `paint/${submitted.id}` });
+    const scopedDir = path.join(backendOutput, "paint", job.id, "video");
+    fs.mkdirSync(scopedDir, { recursive: true });
+    fs.writeFileSync(path.join(scopedDir, "result_00001_.mp4"), "server video");
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname.startsWith("/history/")) return jsonResponse({});
+      if (url.pathname === "/queue") return jsonResponse({ queue_running: [], queue_pending: [] });
+      if (url.pathname === "/view") {
+        expect(url.searchParams.get("filename")).toBe("result_00001_.mp4");
+        expect(url.searchParams.get("subfolder")).toBe(`paint/${job.id}/video`);
+        return new Response(Buffer.from("server video"));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const result = await createJobStatusTool(config).execute(
+      { job_id: job.id },
+      new AbortController().signal,
+    );
+    expect(result.details).toMatchObject({ state: "completed" });
+    const recovered = loadJob(config.outputDir, job.id);
+    expect(recovered.outputManifest).toBeDefined();
+    expect(fs.readFileSync(recovered.files[0].path, "utf-8")).toBe("server video");
+  });
+
+  it("reports a retryable backend outage without changing the persisted job state", async () => {
+    const { config, job } = setup();
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("fetch failed");
+    }));
+
+    const result = await createJobStatusTool(config).execute(
+      { job_id: job.id },
+      new AbortController().signal,
+    );
+    expect(result.details).toMatchObject({ state: "submitted", retryable: true });
+    expect((result.content[0] as { text: string }).text).toContain("left unchanged");
+    expect(loadJob(config.outputDir, job.id).state).toBe("submitted");
   });
 
   it("lists recent durable jobs without contacting ComfyUI", async () => {

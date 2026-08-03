@@ -41,6 +41,11 @@ describe("durable job store", () => {
         imageMaxDimension: 2000,
         imageMaxBytes: 4_718_592,
         imageTotalMaxBytes: 8_388_608,
+        jobIdStyle: "timestamp",
+        reconcileIntervalMs: 30_000,
+        configFiles: [],
+        projectConfigPath: path.join(root, ".pi", "comfyui-paint.json"),
+        globalConfigPath: path.join(root, "global-comfyui-paint.json"),
       },
     };
   }
@@ -73,6 +78,16 @@ describe("durable job store", () => {
     if (process.platform !== "win32") {
       expect(fs.statSync(path.join(path.dirname(job.workflowSnapshotPath), "job.json")).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("uses short timestamp IDs by default and keeps UUID as an option", () => {
+    const { config } = setup();
+    const timestampJob = newJob(config);
+    expect(timestampJob.id).toMatch(/^\d{8}-\d{6}Z-[0-9a-f]{6}$/);
+    expect(path.basename(path.dirname(timestampJob.workflowSnapshotPath))).toBe(`job-${timestampJob.id}`);
+
+    const uuidJob = newJob({ ...config, jobIdStyle: "uuid" });
+    expect(uuidJob.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
   it("atomically rewrites the workflow snapshot and hash", () => {

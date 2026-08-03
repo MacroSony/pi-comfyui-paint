@@ -57,6 +57,11 @@ const config: PaintConfig = {
   imageMaxDimension: 2000,
   imageMaxBytes: Math.floor(4.5 * 1024 * 1024),
   imageTotalMaxBytes: 8 * 1024 * 1024,
+  jobIdStyle: "timestamp",
+  reconcileIntervalMs: 30_000,
+  configFiles: [],
+  projectConfigPath: "/tmp/project-comfyui-paint.json",
+  globalConfigPath: "/tmp/global-comfyui-paint.json",
 };
 
 describe("createPaintTool prepareArguments", () => {
@@ -187,7 +192,7 @@ describe("createPaintTool generated media content", () => {
           },
           "2": {
             class_type: "SaveImage",
-            inputs: {},
+            inputs: { filename_prefix: "test-output" },
             _meta: { title: "[OUTPUT:any] Generated media" },
           },
         }),
@@ -255,6 +260,10 @@ describe("createPaintTool generated media content", () => {
       expect(result.content.filter((item) => item.type === "image")).toHaveLength(1);
 
       const files = result.details.files as Array<{ path: string; mimeType: string }>;
+      const firstJobId = result.details.jobId as string;
+      expect(firstJobId).toMatch(/^\d{8}-\d{6}Z-[0-9a-f]{6}$/);
+      const submittedWorkflow = vi.mocked(queuePrompt).mock.calls[0][1] as Record<string, any>;
+      expect(submittedWorkflow["2"].inputs.filename_prefix).toBe(`paint/${firstJobId}/test-output`);
       expect(files).toHaveLength(2);
       expect(files.map((file) => file.mimeType)).toEqual(["image/png", "video/mp4"]);
       for (const file of files) {
@@ -295,6 +304,7 @@ describe("createPaintTool generated media content", () => {
         state: "submitted",
         promptId: "prompt-1",
         backend: config.backends[0],
+        outputPrefix: `paint/${backgroundJobId}`,
       });
 
       vi.mocked(queuePrompt).mockRejectedValueOnce(new Error("connection reset after POST"));

@@ -15,6 +15,7 @@ import {
 } from "../comfyui-client.js";
 import {
   createJob,
+  generatePaintJobId,
   rewriteWorkflowSnapshot,
   updateJob,
 } from "../job-store.js";
@@ -107,6 +108,27 @@ export function removeUncoveredOptionalFileSlots(
       }
     }
   }
+}
+
+/** Scope Save-node filename prefixes by job ID so outputs remain attributable after history loss. */
+export function applyJobOutputPrefixes(
+  workflow: Record<string, unknown>,
+  outputNodeIds: string[],
+  jobId: string,
+): string | undefined {
+  const outputPrefix = `paint/${jobId}`;
+  let applied = false;
+  for (const nodeId of outputNodeIds) {
+    const node = workflow[nodeId] as Record<string, unknown> | undefined;
+    if (!node) continue;
+    const inputs = (node.inputs ?? {}) as Record<string, unknown>;
+    const current = inputs.filename_prefix;
+    if (typeof current !== "string" || !current.trim() || current.startsWith(`${outputPrefix}/`)) continue;
+    inputs.filename_prefix = `${outputPrefix}/${current.replace(/^\/+/, "")}`;
+    node.inputs = inputs;
+    applied = true;
+  }
+  return applied ? outputPrefix : undefined;
 }
 
 function backgroundResult(job: PaintJobRecord) {
@@ -281,13 +303,18 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           ? applyPowerLoraOverrides(promptWorkflow, details.loraSlots, loraOverrides, loraMetadata)
           : { applied: [] };
 
+        const outputNodeIds = Object.keys(details.outputTypes);
+        const jobId = generatePaintJobId(config.jobIdStyle);
+        const outputPrefix = applyJobOutputPrefixes(promptWorkflow, outputNodeIds, jobId);
         job = createJob(config, {
+          id: jobId,
           backend,
           clientId: config.clientId,
           workflow: path.basename(wfPath),
           workflowPath: wfPath,
           promptWorkflow,
-          outputNodeIds: Object.keys(details.outputTypes),
+          outputNodeIds,
+          outputPrefix,
           prompt: params?.prompt as string | undefined,
           negativePrompt,
           variables,
