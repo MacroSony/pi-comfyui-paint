@@ -105,8 +105,15 @@ describe("parseComfyBackends", () => {
 
 describe("getConfig", () => {
   const originalEnv = { ...process.env };
+  // Point HOME at a path that cannot contain a real global comfyui-paint.json.
+  // Do NOT create the directory: a missing global config path is exactly what
+  // the default-behavior tests expect, and the path itself is never written.
+  const isolatedHome = path.join(os.tmpdir(), "pi-comfyui-paint-test-home");
 
   beforeEach(() => {
+    // Isolate from any real global config (~/.pi/agent/comfyui-paint.json).
+    // Single-key assignment keeps Node's os.homedir() in sync with $HOME.
+    process.env.HOME = isolatedHome;
     // Reset relevant env vars
     delete process.env.COMFYUI_URL;
     delete process.env.COMFYUI_BACKENDS;
@@ -126,7 +133,13 @@ describe("getConfig", () => {
   });
 
   afterEach(() => {
-    process.env = { ...originalEnv };
+    // Restore by mutating the existing process.env object. Replacing it
+    // wholesale (process.env = {...}) desyncs Node's cached environ, so a
+    // later os.homedir() keeps returning the old $HOME and breaks isolation.
+    for (const key of Object.keys(process.env)) {
+      if (!(key in originalEnv)) delete process.env[key];
+    }
+    Object.assign(process.env, originalEnv);
   });
 
   it("uses defaults when no env vars are set", async () => {

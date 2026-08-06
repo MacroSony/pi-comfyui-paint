@@ -1,6 +1,6 @@
 # Background Jobs and Multi-Backend Plan
 
-Status: implemented; pending dogfood and hardening
+Status: implemented; shipped in 0.3.0
 
 Phases 1–3 and targeted cancellation from phase 4 are implemented. Optional
 live-session completion notifications remain deferred because durable job

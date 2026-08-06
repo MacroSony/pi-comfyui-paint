@@ -145,11 +145,29 @@ Workflow JSONs use `_meta.title` annotations:
 - `[VAR] Name` — Customizable variable (exposed as a prompt parameter)
 - `[NOTE]` — Documentation shown in `paint_get_details`
 - `[OUTPUT:type]` — Tagged output node
-- `[FILE:type:order]` — Input file slot for `paint.input_files`
+- `[FILE:type:order]` — Input file slot for `paint.input_files`. Files are matched by media type, not strict position: `[FILE:image:1]` + `[FILE:audio:13]` can both be filled with only two entries, skipping all slots in between.
 - `[FILE:type:order:optional]` — Optional input file slot. When no `input_files` entry covers it, the node is removed from the graph (and all downstream links to it are stripped) instead of failing on its placeholder default. Use this for optional image inputs like MiniMax H3 `first_frame`/`last_frame`/`ref_image_N` — one workflow can serve t2v/i2v/fl2v depending on how many files are passed.
 - `[LORA:slot]` — LoRA loader slot for `paint.loras` overrides. Intended for `Power Lora Loader (rgthree)` nodes.
 
-For workflows with `[FILE:type:order]` nodes, pass local image paths to `paint` as `input_files` in slot order. Relative paths are resolved from the current project directory, uploaded to ComfyUI as input files, and inserted into the annotated workflow nodes.
+For workflows with `[FILE:type:order]` nodes, pass local files to `paint` as `input_files`. Each entry is a bare path or an object; files are routed to the **lowest-numbered uncovered slot of their type**, so slots never need to be filled in order:
+
+```json
+{
+  "workflow": "minimax_h3.json",
+  "prompt": "...",
+  "input_files": [
+    "first_frame.png",
+    { "path": "bgm.mp3", "type": "audio" },
+    { "path": "ref.png", "slot": 9 }
+  ]
+}
+```
+
+- `"ref.png"` — type inferred from the extension (`png`/`jpg`/`webp`/`gif`/… → `image`; `mp4`/`webm`/`mov` → `video`; `mp3`/`wav`/`flac`/… → `audio`; unknown extensions match any slot)
+- `{ "path": "bgm.mp3", "type": "audio" }` — explicit type (`image` / `video` / `audio` / `file`), routed to the first uncovered slot of that type
+- `{ "path": "ref.png", "slot": 9 }` — pin an exact `[FILE:type:order]` slot; the file's type must match that slot's expected type (or be `"file"`), otherwise `paint` errors instead of silently mis-feeding a node
+
+This lets one workflow serve sparse inputs without editing it: a MiniMax H3 node with 9 image + 3 video + 3 audio slots takes `[{ "path": "first.png", "type": "image" }, { "path": "bgm.mp3", "type": "audio" }]` and only those two slots are filled — no dummy files needed. Uncovered `:optional` slots are disconnected from the graph; uncovered required slots keep their defaults (with a warning). Bare paths preserve legacy positional behavior for single-slot and all-image workflows. Relative paths are resolved from the current project directory, uploaded to ComfyUI, and inserted into the annotated nodes.
 
 ## LoRA Workflows
 

@@ -2,8 +2,9 @@
  * ComfyUI HTTP API helpers.
  */
 
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import { createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import * as path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -244,26 +245,61 @@ export function pickFileInputKey(keys: string[], expectedType: string): string |
   return preferred.find((key) => keys.includes(key)) ?? keys[0];
 }
 
+/**
+ * Upload one local file to ComfyUI's /upload/image endpoint.
+ *
+ * The multipart body is streamed directly from disk instead of buffering the
+ * whole file in memory, so large video inputs (hundreds of MB) upload with
+ * constant memory usage. The field name stays "image" — that endpoint accepts
+ * any file type (videos, audio) with a filename.
+ */
 export async function uploadInputFile(
   server: string,
   filePath: string,
   signal?: AbortSignal,
 ): Promise<ComfyUIUploadResult> {
-  const data = fs.readFileSync(filePath);
-  const form = new FormData();
-  form.append("image", new Blob([data]), path.basename(filePath));
-  form.append("type", "input");
-  form.append("overwrite", "true");
+  const filename = path.basename(filePath);
+  const boundary = `----pi-paint-${crypto.randomBytes(12).toString("hex")}`;
+  const preamble = Buffer.from(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="image"; filename="${filename}"\r\n` +
+      `Content-Type: application/octet-stream\r\n\r\n`,
+  );
+  const epilogue = Buffer.from(
+    `\r\n--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="type"\r\n\r\ninput\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n` +
+      `--${boundary}--\r\n`,
+  );
 
-  const res = await fetch(buildComfyUrl(server, "/upload/image"), {
-    method: "POST",
-    body: form,
-    signal,
-  });
-  if (!res.ok) {
-    throw new Error(`ComfyUI /upload/image returned ${res.status}: ${await res.text()}`);
+  const fileStream = createReadStream(filePath);
+  const body = Readable.from(async function* () {
+    yield preamble;
+    yield* fileStream;
+    yield epilogue;
+  }());
+  const destroyBody = () => body.destroy();
+  signal?.addEventListener("abort", destroyBody, { once: true });
+
+  try {
+    // undici accepts a Node stream body with duplex: "half"; the DOM RequestInit
+    // type predates it, so widen the option object explicitly.
+    const init: RequestInit & { duplex: "half" } = {
+      method: "POST",
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body: body as unknown as BodyInit,
+      duplex: "half",
+      signal,
+    };
+    const res = await fetch(buildComfyUrl(server, "/upload/image"), init);
+    if (!res.ok) {
+      throw new Error(`ComfyUI /upload/image returned ${res.status}: ${await res.text()}`);
+    }
+    return (await res.json()) as ComfyUIUploadResult;
+  } finally {
+    signal?.removeEventListener("abort", destroyBody);
   }
-  return (await res.json()) as ComfyUIUploadResult;
 }
 
 // ─── Download ────────────────────────────────────────────────────────────────

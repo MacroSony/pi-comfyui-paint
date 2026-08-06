@@ -30,12 +30,29 @@ For long video workflows, call `paint` with `background: true`, keep the returne
 |---|---|---|
 | `[VAR] Name` on a Primitive* node | `paint.variables` / `prompt` / `negative_prompt` injection point | prompt & variables are **ignored**; the workflow's hardcoded values are used |
 | `[OUTPUT:image]` on a SaveImage node | Marks the result node | fallback: **all** output nodes are scanned & downloaded |
-| `[FILE:image:1]` on a LoadImage node | `paint.input_files` upload slot (order = number) | no slot; passing input_files errors; without input_files no warning is raised |
+| `[FILE:image:1]` on a LoadImage node | `paint.input_files` upload slot (order = number). Entries are matched by media type, not strict position — see “Skipping file slots” below | no slot; passing input_files errors; without input_files no warning is raised |
 | `[FILE:image:1:optional]` on a LoadImage node | Optional upload slot: uncovered slots are **removed from the graph** (downstream links stripped) so optional model inputs stay unconnected | same as above |
 | `[LORA:slot]` on a Power Lora Loader (rgthree) | `paint.loras` override slot | unannotated Power Lora Loaders are auto-detected as `node_<id>` slots — overrides still work via that name, but annotation is recommended |
 | `[NOTE]` | Documentation shown in `paint_get_details` | — |
 
-Warnings: if a workflow **has** `[FILE]` slots but fewer `input_files` are passed than slots, `paint` warns and the uncovered LoadImage node falls back to its default input image. Slots marked `:optional` are exempt — they are disconnected from the graph instead, which lets one workflow serve multiple modes (e.g. MiniMax H3: 0 files = t2v, 1 = i2v, 2 = fl2v).
+Warnings: if a workflow **has** `[FILE]` slots but some are not covered by `input_files`, `paint` warns and the uncovered LoadImage node falls back to its default input image. Slots marked `:optional` are exempt — they are disconnected from the graph instead, which lets one workflow serve multiple modes (e.g. MiniMax H3: 0 files = t2v, 1 = i2v, 2 = fl2v). Because entries are matched by media type, “uncovered” means the slots you didn't target — not merely the trailing ones.
+
+### Skipping file slots (multi-modal nodes)
+
+`input_files` entries are routed by media type, so a later slot never requires filling earlier ones. Each entry is a bare path (type inferred from extension) or an object:
+
+```json
+{
+  "workflow": "minimax_h3.json",
+  "prompt": "...",
+  "input_files": [
+    { "path": "first_frame.png", "type": "image" },
+    { "path": "bgm.mp3", "type": "audio" }
+  ]
+}
+```
+
+The image goes to the first uncovered `[FILE:image:N]` slot and the audio to the first uncovered `[FILE:audio:N]` slot regardless of slot order — a 9-image + 3-video + 3-audio H3 workflow needs no editing and no dummy files. `{ "path": ..., "type": "file" }` matches any slot (positional fallback); `{ "path": ..., "slot": 13 }` pins an exact `[FILE:type:order]` — the file's type must match that slot's expected type, otherwise `paint` errors (use `type: "file"` to bypass). Uncovered `:optional` slots are disconnected from the graph; uncovered required slots fall back to their defaults (with a warning).
 
 ## Workflow
 

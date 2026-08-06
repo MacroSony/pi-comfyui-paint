@@ -12,11 +12,14 @@ import {
   extractExecutionError,
   pollHistory,
   downloadOutputToFile,
+  uploadInputFile,
 } from "../src/comfyui-client.js";
+import * as http from "node:http";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ComfyUIHistoryOutput } from "../src/types.js";
+
 
 // ─── buildComfyUrl ──────────────────────────────────────────────────────────
 
@@ -274,5 +277,81 @@ describe("pollHistory", () => {
     await pollHistory("http://comfy.test", "abc", undefined, 5000, 1, (ms) => elapsed.push(ms), 0);
     expect(elapsed.length).toBeGreaterThan(0);
     expect(elapsed.every((ms) => ms >= 0)).toBe(true);
+  });
+});
+
+// ─── uploadInputFile (real HTTP, streaming multipart) ───────────────────────
+
+describe("uploadInputFile", () => {
+  it("streams a correct multipart body with the file bytes intact", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-paint-upload-test-"));
+    const filePath = path.join(tmpDir, "clip.mp4");
+    // Deliberately large-ish payload so streaming matters (8 MiB of noise).
+    const payload = Buffer.alloc(8 * 1024 * 1024, 0x5a);
+    fs.writeFileSync(filePath, payload);
+
+    const server = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        serverReq = { contentType: req.headers["content-type"] ?? "", body: Buffer.concat(chunks) };
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ name: "clip.mp4", subfolder: "", type: "input" }));
+      });
+    });
+    let serverReq: { contentType: string; body: Buffer } | undefined;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server failed to listen");
+
+    try {
+      const result = await uploadInputFile(
+        `http://127.0.0.1:${address.port}`,
+        filePath,
+      );
+      expect(result).toEqual({ name: "clip.mp4", subfolder: "", type: "input" });
+
+      const captured = serverReq!;
+      const boundary = /boundary=([^;]+)/.exec(captured.contentType)?.[1];
+      expect(boundary).toBeTruthy();
+      const body = captured.body.toString("binary");
+
+      // File part is present with the right disposition and the bytes arrive intact.
+      expect(body).toContain(
+        `Content-Disposition: form-data; name="image"; filename="clip.mp4"`,
+      );
+      const headerEnd = captured.body.indexOf(Buffer.from("\r\n\r\n")) + 4;
+      const fileBytes = captured.body.subarray(headerEnd, headerEnd + payload.length);
+      expect(Buffer.compare(fileBytes, payload)).toBe(0);
+      // Extra form fields and a proper closing boundary.
+      expect(body).toContain('name="type"');
+      expect(body).toContain('name="overwrite"');
+      expect(body.endsWith(`--${boundary}--\r\n`)).toBe(true);
+      // The multipart content length must account for the whole payload.
+      expect(captured.body.length).toBeGreaterThan(payload.length);
+    } finally {
+      server.close();
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces HTTP failures from the upload endpoint", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("disk full");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server failed to listen");
+    try {
+      const filePath = path.join(os.tmpdir(), `pi-paint-upload-fail-${Date.now()}`);
+      fs.writeFileSync(filePath, Buffer.from("x"));
+      await expect(
+        uploadInputFile(`http://127.0.0.1:${address.port}`, filePath),
+      ).rejects.toThrow("returned 500: disk full");
+      fs.rmSync(filePath, { force: true });
+    } finally {
+      server.close();
+    }
   });
 });

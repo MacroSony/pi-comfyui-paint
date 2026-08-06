@@ -83,7 +83,11 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
         const slotKeys = Object.keys(details.inputSlots);
         if (slotKeys.length > 0) {
           lines.push(
-            `\n📥 **Input file slots:**\n\`\`\`json\n${JSON.stringify(details.inputSlots, null, 2)}\n\`\`\``,
+            `\n📥 **Input file slots:**\n\`\`\`json\n${JSON.stringify(details.inputSlots, null, 2)}\n\`\`\`` +
+              "\nPass `input_files` as bare paths or `{ path, type }` objects (type: image/video/audio/file) " +
+              "— files fill the first uncovered slot of their type, so later slots can be used without " +
+              "filling earlier ones; `{ path, slot }` pins an exact slot order (the file type must match " +
+              "the slot's expected type).",
           );
         }
 

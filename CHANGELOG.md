@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `paint.input_files` entries are now matched by media type instead of strict
+  position: each entry can be `{ path, type?: image|video|audio|file, slot?: order }`
+  (bare paths infer the type from their extension). Files fill the lowest-numbered
+  uncovered slot of their type, so multi-modal workflows (e.g. MiniMax H3 with 9
+  image + 3 video + 3 audio slots) accept sparse inputs — one image plus one audio
+  without dummy files or workflow edits. `slot` pins an exact `[FILE:type:order]`
+  and is validated against the slot's expected type (mismatches error with a
+  pointer to `type: "file"` as the escape hatch). Bare paths preserve legacy
+  positional mapping only for single-slot and all-image workflows; once slot
+  types differ, entries are routed by type instead of strict position, so a
+  mixed-type positional caller sees an explicit "matches no uncovered slot"
+  error rather than a silently mis-fed node.
+
 - `paint` returns bounded inline JPEG previews for image outputs while always
   retaining the original local paths. Preview count, quality, dimensions,
   per-image bytes, and total bytes are configurable; videos and other media
@@ -50,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Job cancellation uses ComfyUI's atomic targeted endpoint when available.
   Legacy backends can still remove pending prompts, but running jobs are not
   subjected to a race-prone backend-wide interrupt.
+- Background submissions (`paint(background=true)`) now surface job warnings
+  (e.g. uncovered `[FILE]` slots falling back to their defaults) in the
+  immediate response, matching the synchronous result path.
+- Input uploads stream the multipart body directly from disk instead of
+  buffering the whole file in memory, keeping memory constant for large video
+  inputs.
 - Job status now reports temporarily unreachable backends as retryable
   diagnostics without mutating the persisted job state.
 
@@ -68,6 +87,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ComfyUI generation, and ambiguous submissions are never retried automatically.
 - Completed outputs can be recovered after ComfyUI history loss from the saved
   manifest or, for local/mounted backends, from the job-scoped output prefix.
+- Uncovered optional `[FILE]` slots now propagate removal to downstream nodes
+  whose inputs all referenced removed nodes (e.g. MiniMax H3 ref2va's
+  `LoadVideo` → `GetVideoComponents` chain), instead of leaving a broken node
+  behind that fails ComfyUI's required-input validation.
+- `config` tests are isolated from any real global `~/.pi/agent/comfyui-paint.json`:
+  `getConfig` tests point `HOME` at a clean path and restore env vars by
+  mutating `process.env` instead of replacing it wholesale (replacing the
+  object desyncs Node's cached environ, so a later `os.homedir()` keeps
+  returning the stale `$HOME` and leaks the host's global config into tests).
 
 ### Security
 
