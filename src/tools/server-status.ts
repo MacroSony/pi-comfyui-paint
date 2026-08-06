@@ -3,7 +3,7 @@
 import * as fs from "node:fs";
 import { comfyFetch } from "../comfyui-client.js";
 import { listJobs } from "../job-store.js";
-import { listAvailableWorkflowFiles } from "../workflow.js";
+import { listAvailableWorkflowFiles, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
 import type { ComfyUIQueueStatus, PaintConfig } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
@@ -23,6 +23,14 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
         config.workflowDir,
         config.bundledWorkflowDir,
       );
+      const workflowCapabilities = availableWorkflows.map((workflow) => {
+        const parsed = loadWorkflowJson(workflow.path);
+        return {
+          name: workflow.name,
+          capabilities: parsed ? parseWorkflowDetails(parsed).capabilities : [],
+          bundled: workflow.bundled,
+        };
+      });
       const jobs = listJobs(config.outputDir, 100);
 
       const statuses = await Promise.all(
@@ -66,12 +74,28 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
         ...statuses.flatMap((status) => [
           `- ${status.backend.id}: ${status.backend.url}`,
           `  Reachable: ${status.reachable ? "yes" : "no"}; running: ${status.running}; pending: ${status.pending}; recorded jobs: ${status.jobCount}`,
+          `  Capabilities: ${
+            status.backend.capabilities === undefined
+              ? "accepts all workflows"
+              : status.backend.capabilities.length > 0
+                ? status.backend.capabilities.join(", ")
+                : "none (soft-disabled)"
+          }`,
           ...(status.queueError ? [`  Queue error: ${status.queueError}`] : []),
           ...(status.statsError ? [`  System stats error: ${status.statsError}`] : []),
         ]),
         `Active workflow directory: ${config.workflowDir}`,
         `Active workflow directory exists: ${fs.existsSync(config.workflowDir) ? "yes" : "no"}`,
         `Effective workflows: ${availableWorkflows.length} (${bundledCount} bundled fallback)`,
+        ...(workflowCapabilities.length > 0
+          ? [
+              "Workflow capability requirements:",
+              ...workflowCapabilities.map(
+                (workflow) =>
+                  `- ${workflow.name} → ${workflow.capabilities.length > 0 ? workflow.capabilities.join(", ") : "any backend"}`,
+              ),
+            ]
+          : []),
         `Output directory: ${config.outputDir}`,
         `Output retention: ${config.outputRetentionHours === 0 ? "disabled" : `${config.outputRetentionHours}h`}`,
         `Synchronous timeout: ${config.syncTimeoutMs / 1000}s`,
@@ -96,6 +120,7 @@ export function createServerStatusTool(config: PaintConfig): ToolRegistration {
           projectWorkflowDir: config.projectWorkflowDir,
           bundledWorkflowDir: config.bundledWorkflowDir,
           workflows: availableWorkflows.map((workflow) => workflow.name),
+          workflowCapabilities,
           bundledWorkflows: availableWorkflows.filter((workflow) => workflow.bundled).map((workflow) => workflow.name),
           outputDir: config.outputDir,
           outputDirIsDefault: config.outputDirIsDefault,

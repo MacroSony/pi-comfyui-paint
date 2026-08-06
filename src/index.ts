@@ -20,6 +20,12 @@
  *   COMFYUI_BACKEND_OUTPUT_DIRS - Optional local output dirs: id=/path,id=/path
  *   COMFYUI_RECONCILE_INTERVAL_SECONDS - Background job sweep interval (default: 30; 0 disables)
  *
+ * Backend capacity (JSON config only, e.g. ~/.pi/agent/comfyui-paint.json):
+ * backends entries may declare capabilities: ["video", "h3"]. Workflows
+ * declare required tags with a [CAPABILITY] marker node; paint auto-selects
+ * among backends offering every required tag. Backends without a capabilities
+ * list accept any workflow.
+ *
  * Registers 10 tools:
  *   paint_list_workflows  paint_get_details       paint_validate_workflow
  *   paint_server_status   paint_get_models        paint_interrupt
@@ -52,7 +58,7 @@ export default function (pi: ExtensionAPI) {
   const tools = [
     createListWorkflowsTool(config.workflowDir, config.bundledWorkflowDir),
     createGetDetailsTool(config),
-    createValidateWorkflowTool(config.workflowDir, config.bundledWorkflowDir),
+    createValidateWorkflowTool(config),
     createServerStatusTool(config),
     createGetModelsTool(config),
     createInterruptTool(config),

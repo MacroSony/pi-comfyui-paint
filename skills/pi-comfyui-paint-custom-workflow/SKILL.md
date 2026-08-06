@@ -33,6 +33,7 @@ For long video workflows, call `paint` with `background: true`, keep the returne
 | `[FILE:image:1]` on a LoadImage node | `paint.input_files` upload slot (order = number). Entries are matched by media type, not strict position — see “Skipping file slots” below | no slot; passing input_files errors; without input_files no warning is raised |
 | `[FILE:image:1:optional]` on a LoadImage node | Optional upload slot: uncovered slots are **removed from the graph** (downstream links stripped) so optional model inputs stay unconnected | same as above |
 | `[LORA:slot]` on a Power Lora Loader (rgthree) | `paint.loras` override slot | unannotated Power Lora Loaders are auto-detected as `node_<id>` slots — overrides still work via that name, but annotation is recommended |
+| `[CAPABILITY]` on a `PrimitiveStringMultiline` node — the title is exactly `[CAPABILITY]`; the `value` input holds the comma-separated tags (e.g. `image, anima`) | Declares the capability tags this workflow requires for backend selection; `paint` only auto-selects backends that offer every tag | the workflow runs on any backend |
 | `[NOTE]` | Documentation shown in `paint_get_details` | — |
 
 Warnings: if a workflow **has** `[FILE]` slots but some are not covered by `input_files`, `paint` warns and the uncovered LoadImage node falls back to its default input image. Slots marked `:optional` are exempt — they are disconnected from the graph instead, which lets one workflow serve multiple modes (e.g. MiniMax H3: 0 files = t2v, 1 = i2v, 2 = fl2v). Because entries are matched by media type, “uncovered” means the slots you didn't target — not merely the trailing ones.
@@ -56,9 +57,9 @@ The image goes to the first uncovered `[FILE:image:N]` slot and the audio to the
 
 ## Workflow
 
-1. **Write** the workflow JSON to `.pi/comfyui_workflows/<name>.json` (project dir) — or any absolute path; resolution order is: active dir → absolute path → bundled dir (same-name project file always wins).
-2. **Validate**: `paint_validate_workflow <name>` — checks parseability + annotation structure.
-3. **Inspect**: `paint_get_details <name>` — confirms variables, output nodes, file slots, LoRA slots.
+1. **Write** the workflow JSON to `.pi/comfyui_workflows/<name>.json` (project dir) — or any absolute path; resolution order is: active dir → absolute path → bundled dir (same-name project file always wins). If the setup has multiple backends with declared `capabilities`, add a `[CAPABILITY]` marker node (a `PrimitiveStringMultiline` whose `value` holds comma-separated tags like `image, anime`) so `paint` picks a backend that can actually run it; an explicit `backend:` argument still overrides selection.
+2. **Validate**: `paint_validate_workflow <name>` — checks parseability + annotation structure (pass `backend:` to also check capability fit).
+3. **Inspect**: `paint_get_details <name>` — confirms variables, output nodes, file slots, LoRA slots, required capabilities, and backend fit.
 4. **Generate**: `paint` with `workflow: "<name>.json"`, plus `prompt` / `negative_prompt` / `variables` / `input_files` / `loras` as needed.
 
 For anime models trained on Danbooru tags (e.g. Anima), use `paint_search_danbooru_tags` to confirm tag spelling before writing the prompt.

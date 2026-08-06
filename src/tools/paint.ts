@@ -378,6 +378,7 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
       "Use paint_server_status before generating to inspect backend health and queues.",
       "Use paint_job_cancel for a specific durable job; paint_interrupt is a backend-wide escape hatch.",
       "If paint_get_details reports LoRA slots, pass loras by slot and use paint_get_models to confirm installed file names.",
+      "Workflows may declare required capability tags with a [CAPABILITY] marker node; paint auto-selects among backends that offer every required tag. Call paint_get_details or paint_server_status to inspect capability fit.",
       "When same-type [FILE] slots have positional meaning (e.g. H3 first_frame vs ref_image_N), pin exact slots with { path, slot } in input_files; the file type must match the slot's expected type.",
       "Custom workflows may use optional [VAR]/[OUTPUT]/[FILE]/[LORA] annotations; see the pi-comfyui-paint-custom-workflow skill.",
     ],
@@ -487,11 +488,10 @@ export function createPaintTool(config: PaintConfig, cwd: string): ToolRegistrat
           content: [{ type: "text", text: "Selecting a ComfyUI backend…" }],
           details: {},
         });
-        reservation = await reserveBackend(
-          config.backends,
-          params?.backend as string | undefined,
-          signal,
-        );
+        reservation = await reserveBackend(config.backends, {
+          preferredId: params?.backend as string | undefined,
+          requiredCapabilities: details.capabilities,
+        }, signal);
         const backend = reservation.backend;
 
         if (loraOverrides.length > 0) {

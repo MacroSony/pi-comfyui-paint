@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ComfyBackend, PaintConfig, PaintJobIdStyle } from "./types.js";
+import { normalizeCapabilityList } from "./capabilities.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,7 +96,22 @@ export function parseComfyBackends(
       assertBackendId(id);
       if (seen.has(id)) throw new Error(`Duplicate ComfyUI backend ID '${id}'.`);
       seen.add(id);
-      return { id, url: normalizeComfyUrl(backend.url) };
+      const capabilities = backend.capabilities;
+      if (capabilities !== undefined && !Array.isArray(capabilities)) {
+        throw new Error(
+          `Invalid capabilities for backend '${id}': expected an array of tag strings.`,
+        );
+      }
+      if (capabilities && capabilities.some((tag) => typeof tag !== "string")) {
+        throw new Error(
+          `Invalid capabilities for backend '${id}': expected an array of tag strings.`,
+        );
+      }
+      const result: ComfyBackend = { id, url: normalizeComfyUrl(backend.url) };
+      if (capabilities !== undefined) {
+        result.capabilities = normalizeCapabilityList(capabilities as string[]);
+      }
+      return result;
     });
   }
 
@@ -103,6 +119,8 @@ export function parseComfyBackends(
     return [{ id: "default", url: normalizeComfyUrl(fallbackUrl) }];
   }
 
+  // The flat COMFYUI_BACKENDS=id=url,id=url form cannot carry capability
+  // lists; capabilities are declared through JSON config backends entries.
   const seen = new Set<string>();
   return rawBackends.split(",").map((rawEntry) => {
     const entry = rawEntry.trim();

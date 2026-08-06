@@ -3,7 +3,7 @@
  */
 
 import * as path from "node:path";
-import { getBackend } from "../backends.js";
+import { getBackend, backendFitDiagnostic } from "../backends.js";
 import { resolveWorkflowPath, loadWorkflowJson, parseWorkflowDetails } from "../workflow.js";
 import {
   buildUsableLoras,
@@ -80,6 +80,24 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
           );
         }
 
+        if (details.capabilities.length > 0) {
+          lines.push(
+            `\n🎯 **Required capabilities:** ${details.capabilities.join(", ")}\n` +
+              "Generation will only auto-select backends that offer every tag " +
+              "(declared via the workflow's [CAPABILITY] node; see paint_server_status).",
+          );
+        } else {
+          lines.push(
+            "\n🎯 **Required capabilities:** none — this workflow runs on any backend.",
+          );
+        }
+        const fit = backendFitDiagnostic(backend, details.capabilities);
+        if (fit) {
+          lines.push(`⚠️ **Backend fit:** ${fit}`);
+        } else if (details.capabilities.length > 0) {
+          lines.push(`✅ **Backend fit:** ${backend.id} accepts this workflow's capabilities.`);
+        }
+
         const slotKeys = Object.keys(details.inputSlots);
         if (slotKeys.length > 0) {
           lines.push(
@@ -107,6 +125,8 @@ export function createGetDetailsTool(config: PaintConfig): ToolRegistration {
             variables: details.variables,
             outputTypes: details.outputTypes,
             inputSlots: details.inputSlots,
+            capabilities: details.capabilities,
+            backendFit: fit ? { accepted: false, reason: fit } : { accepted: true },
             loras: {
               supported: details.loraSlots.length > 0,
               slots: details.loraSlots,

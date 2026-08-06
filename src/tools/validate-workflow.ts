@@ -3,32 +3,35 @@
  */
 
 import * as path from "node:path";
+import { getBackend, backendFitDiagnostic } from "../backends.js";
 import { resolveWorkflowPath, loadWorkflowJson, parseWorkflowDetails, validateWorkflow } from "../workflow.js";
+import type { PaintConfig } from "../types.js";
 import type { ToolRegistration } from "./tool-utils.js";
 
-export function createValidateWorkflowTool(
-  workflowDir: string,
-  bundledWorkflowDir?: string,
-): ToolRegistration {
+export function createValidateWorkflowTool(config: PaintConfig): ToolRegistration {
   return {
     name: "paint_validate_workflow",
     label: "Paint Validate Workflow",
     description:
       "Validate a ComfyUI workflow JSON before generation. Checks parseability, [VAR] annotations, " +
-      "[OUTPUT:type] annotations, and [FILE:type:order] input slots. Use this when a workflow fails or before using a custom workflow.",
-    promptSnippet: "Validate a workflow JSON's structure and pi-comfyui-paint annotations",
+      "[OUTPUT:type] annotations, [FILE:type:order] input slots, and [CAPABILITY] tags. " +
+      "Pass a backend to also check whether that backend can accept the workflow's required capabilities. " +
+      "Use this when a workflow fails or before using a custom workflow.",
+    promptSnippet: "Validate a workflow JSON's structure, annotations, and backend capability fit",
     promptGuidelines: [
       "Use paint_validate_workflow when a paint generation fails or before using a custom workflow to check for annotation errors.",
+      "Pass backend to paint_validate_workflow to confirm a specific backend accepts the workflow's [CAPABILITY] requirements.",
     ],
     parameters: {
       workflow: { type: "optional", valueType: "string", description: "The workflow file to validate. If omitted, validates the first available workflow." },
+      backend: { type: "optional", valueType: "string", description: "Backend ID to check capability fit against. Defaults to the first backend." },
     },
     async execute(params) {
       try {
         const wfPath = resolveWorkflowPath(
-          workflowDir,
+          config.workflowDir,
           params?.workflow as string | undefined,
-          bundledWorkflowDir,
+          config.bundledWorkflowDir,
         );
         const wf = loadWorkflowJson(wfPath);
         if (!wf) {
@@ -47,7 +50,18 @@ export function createValidateWorkflowTool(
           `Variables: ${Object.keys(details.variables).length}`,
           `Tagged outputs: ${Object.keys(details.outputTypes).length}`,
           `Input file slots: ${Object.keys(details.inputSlots).length}`,
+          `Required capabilities: ${
+            details.capabilities.length > 0 ? details.capabilities.join(", ") : "none (any backend)"
+          }`,
         ];
+
+        const backend = getBackend(config.backends, params?.backend as string | undefined);
+        const fit = backendFitDiagnostic(backend, details.capabilities);
+        if (fit) {
+          lines.push(`⚠️ **Backend fit:** ${fit}`);
+        } else if (details.capabilities.length > 0) {
+          lines.push(`✅ **Backend fit:** ${backend.id} accepts this workflow's capabilities.`);
+        }
 
         if (validation.errors.length > 0) {
           lines.push("\n❌ **Errors:**");
@@ -71,6 +85,9 @@ export function createValidateWorkflowTool(
             variables: details.variables,
             outputTypes: details.outputTypes,
             inputSlots: details.inputSlots,
+            capabilities: details.capabilities,
+            backend,
+            backendFit: fit ? { accepted: false, reason: fit } : { accepted: true },
           },
         };
       } catch (e) {

@@ -166,6 +166,45 @@ If all backends are unreachable, fail without creating a locally pending job.
 This selector does not estimate duration. It is intentionally basic; native
 backend queues remain the source of truth.
 
+## Direct backend selection
+
+### Capacity tags (implemented in 0.3.0)
+
+Backends may declare which workflows they can accept via capability tags
+(JSON config only):
+
+```json
+{
+  "backends": [
+    { "id": "gpu-a", "url": "http://...:8188", "capabilities": ["video", "h3", "image"] },
+    { "id": "gpu-b", "url": "http://...:8189", "capabilities": ["image", "anima"] }
+  ]
+}
+```
+
+Workflows declare their required tags with a `[CAPABILITY]` marker node (an
+inert `PrimitiveStringMultiline` whose `value` holds a comma-separated list,
+mirroring the `[NOTE]` convention). Selection semantics:
+
+- A workflow's required tags must all be present on the backend (AND match).
+- A workflow with no `[CAPABILITY]` node runs on any backend.
+- A backend without a `capabilities` field accepts every workflow; an empty
+  array accepts nothing (soft-disable).
+- Automatic selection filters to the capable subset, then least-queued with
+  reservations and round-robin ties as before.
+- An explicit `backend:` argument is validated against the workflow's tags and
+  fails fast when it cannot run the workflow.
+- No-match and mismatch errors list the workflow's required tags and every
+  backend's offering, so the failure is actionable.
+
+Tags are free-form but should stay coarse: domain tags (`image`, `video`,
+`audio`, `anime`, `upscale`) plus model/pack tags (`h3`, `krea`, `anima`).
+They express functional ability, not resources; per-backend VRAM or slot
+policies are out of scope. The eventual correctness upgrade is per-backend
+node-class auto-detection via `/object_info` (a workflow's `class_type` set
+vs. the backend's installed classes), which removes the manual tag inventory
+without replacing resource constraints.
+
 ## Durable job records
 
 Create the private job directory before prompt submission. Store one atomic JSON
@@ -424,3 +463,6 @@ Until such a worker exists, direct assignment is the safer durability tradeoff.
 - Large video output download does not require buffering the whole file.
 - No ambiguous submission is duplicated automatically.
 - The current single-backend synchronous workflow remains supported.
+- A workflow that a backend cannot run is never auto-assigned to it: backends
+  declare capability tags and workflows declare required tags, with
+  clear diagnostics on mismatch.

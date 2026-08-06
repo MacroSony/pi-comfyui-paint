@@ -13,13 +13,13 @@ pi install npm:pi-comfyui-paint
 Or install a pinned version:
 
 ```bash
-pi install npm:pi-comfyui-paint@0.2.0
+pi install npm:pi-comfyui-paint@0.3.0
 ```
 
 Development/git install:
 
 ```bash
-pi install git:github.com/MacroSony/pi-comfyui-paint@v0.2.0
+pi install git:github.com/MacroSony/pi-comfyui-paint@v0.3.0
 ```
 
 ## Configuration
@@ -36,8 +36,16 @@ JSON config keys use camelCase equivalents, for example:
 ```json
 {
   "backends": [
-    { "id": "gpu-a", "url": "http://127.0.0.1:8188" },
-    { "id": "gpu-b", "url": "http://127.0.0.1:8189" }
+    {
+      "id": "gpu-a",
+      "url": "http://127.0.0.1:8188",
+      "capabilities": ["video", "h3", "image", "krea"]
+    },
+    {
+      "id": "gpu-b",
+      "url": "http://127.0.0.1:8189",
+      "capabilities": ["image", "anima"]
+    }
   ],
   "outputDir": ".pi/paint-jobs",
   "syncTimeoutSeconds": 600,
@@ -51,12 +59,14 @@ JSON config keys use camelCase equivalents, for example:
 }
 ```
 
+Backend `capabilities` are declared in JSON config only (the flat `COMFYUI_BACKENDS=id=url` env form cannot carry a list). A backend without a `capabilities` field accepts every workflow; `capabilities: []` accepts nothing (a soft-disable). Workflows declare their required tags with a `[CAPABILITY]` marker node (see below), and `paint` only auto-selects among backends that offer every required tag — an explicit `backend:` that cannot run the workflow fails fast with a clear message.
+
 Relative paths in a project config resolve from the project root; relative paths in the global config resolve from the user home directory. Environment variables remain the override mechanism for one-off runs.
 
 | Env var | JSON key | Default | Description |
 |---------|----------|---------|-------------|
 | `COMFYUI_URL` | `url` | `http://127.0.0.1:8188` | ComfyUI server URL. `https://` URLs are supported; legacy `host:port` values are treated as `http://host:port`. |
-| `COMFYUI_BACKENDS` | `backends` | (unset) | Named ComfyUI backends in `id=url,id=url` form, or a JSON `[{id,url}]` array. When set, this replaces `COMFYUI_URL` for generation and enables least-queued direct assignment. |
+| `COMFYUI_BACKENDS` | `backends` | (unset) | Named ComfyUI backends in `id=url,id=url` form, or a JSON `[{id,url}]` array. When set, this replaces `COMFYUI_URL` for generation and enables least-queued direct assignment. Capability tags are JSON-config-only: add `"capabilities": ["video", "h3"]` to a backends entry (see above). |
 | `COMFYUI_WORKFLOW_DIR` | `workflowDir` | (auto) | Custom workflow directory |
 | `COMFYUI_OUTPUT_DIR` | `outputDir` | `<temp>/pi-comfyui-paint-<user>` | Root for private job records and output folders. Relative paths are resolved from the project directory. Use a persistent location when job recovery must survive OS temp cleanup. |
 | `COMFYUI_OUTPUT_RETENTION_HOURS` | `outputRetentionHours` | `168` | Delete terminal extension-managed jobs/outputs after this many hours. Active and uncertain jobs are retained. Set to `0` to disable extension cleanup. |
@@ -96,6 +106,8 @@ COMFYUI_BACKENDS="gpu-a=http://gpu-a:8188,gpu-b=http://gpu-b:8188"
 For each generation, the extension queries all native queues concurrently and directly submits to the reachable backend with the fewest running, pending, and locally-reserved submissions. Ties rotate within the Pi process. If every backend is busy, the job is still assigned immediately to the shortest native queue, so ComfyUI—not the Pi process—durably owns the wait.
 
 Automatic selection initially assumes the backends have compatible models, custom nodes, and workflows. Pass `backend: "gpu-a"` to `paint` to force one server. Backend-aware tools such as `paint_get_models`, `paint_get_details`, and `paint_interrupt` also accept a backend ID; `paint_interrupt` requires one when multiple backends are configured.
+
+Once backends declare `capabilities`, automatic selection filters to the capable subset first, then picks the least-queued one among them. `paint_get_details` reports the workflow's required tags and whether the requested backend can run it; `paint_validate_workflow` accepts a `backend` argument for the same fit check; `paint_server_status` lists each backend's capabilities and every workflow's requirements.
 
 ## Workflow Resolution
 
@@ -145,6 +157,7 @@ Workflow JSONs use `_meta.title` annotations:
 - `[VAR] Name` — Customizable variable (exposed as a prompt parameter)
 - `[NOTE]` — Documentation shown in `paint_get_details`
 - `[OUTPUT:type]` — Tagged output node
+- `[CAPABILITY]` — Marker node: a `PrimitiveStringMultiline` whose title is exactly `[CAPABILITY]` and whose `value` input holds the comma-separated tags (e.g. `image, anima`) this workflow requires for backend selection. A workflow is only auto-assigned to backends that offer every tag; workflows without a `[CAPABILITY]` node run on any backend. Recommended vocabulary: domain tags (`image`, `video`, `audio`, `anime`, `upscale`) plus model/pack tags (`h3`, `krea`, `anima`).
 - `[FILE:type:order]` — Input file slot for `paint.input_files`. Files are matched by media type, not strict position: `[FILE:image:1]` + `[FILE:audio:13]` can both be filled with only two entries, skipping all slots in between.
 - `[FILE:type:order:optional]` — Optional input file slot. When no `input_files` entry covers it, the node is removed from the graph (and all downstream links to it are stripped) instead of failing on its placeholder default. Use this for optional image inputs like MiniMax H3 `first_frame`/`last_frame`/`ref_image_N` — one workflow can serve t2v/i2v/fl2v depending on how many files are passed.
 - `[LORA:slot]` — LoRA loader slot for `paint.loras` overrides. Intended for `Power Lora Loader (rgthree)` nodes.

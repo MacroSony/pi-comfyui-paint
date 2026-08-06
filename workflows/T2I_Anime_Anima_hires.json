@@ -344,5 +344,14 @@
     "_meta": {
       "title": "VAE Decode (pass 2)"
     }
+  },
+  "89": {
+    "inputs": {
+      "value": "image, anima"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "[CAPABILITY]"
+    }
   }
 }

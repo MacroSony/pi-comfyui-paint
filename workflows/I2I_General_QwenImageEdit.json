@@ -328,5 +328,14 @@
     "_meta": {
       "title": "[NOTE]"
     }
+  },
+  "88": {
+    "inputs": {
+      "value": "image, qwen"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "[CAPABILITY]"
+    }
   }
 }

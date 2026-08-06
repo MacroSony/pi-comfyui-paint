@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // Import the pure functions for testing
 import { envFlag, normalizeComfyUrl, parseComfyBackends } from "../src/config.js";
+import type { ComfyBackend } from "../src/types.js";
 
 describe("envFlag", () => {
   it("returns true for '1'", () => {
@@ -100,6 +101,50 @@ describe("parseComfyBackends", () => {
   it("rejects malformed and duplicate backend IDs", () => {
     expect(() => parseComfyBackends("missing-url", undefined)).toThrow("Expected id=");
     expect(() => parseComfyBackends("gpu=http://a,gpu=http://b", undefined)).toThrow("Duplicate");
+  });
+
+  it("parses capabilities from array backends and normalizes tags", () => {
+    expect(parseComfyBackends(
+      [
+        { id: "gpu-a", url: "http://gpu-a:8188", capabilities: ["Video", " h3 ", "video"] },
+        { id: "gpu-b", url: "http://gpu-b:8188", capabilities: ["anime", "image"] },
+      ],
+      undefined,
+    )).toEqual([
+      { id: "gpu-a", url: "http://gpu-a:8188", capabilities: ["video", "h3"] },
+      { id: "gpu-b", url: "http://gpu-b:8188", capabilities: ["anime", "image"] },
+    ]);
+  });
+
+  it("keeps backends without a capabilities field unrestricted", () => {
+    expect(parseComfyBackends(
+      [{ id: "gpu-a", url: "http://gpu-a:8188" }],
+      undefined,
+    )).toEqual([{ id: "gpu-a", url: "http://gpu-a:8188" }]);
+  });
+
+  it("preserves an explicit empty capabilities array (soft-disable)", () => {
+    expect(parseComfyBackends(
+      [{ id: "gpu-a", url: "http://gpu-a:8188", capabilities: [] }],
+      undefined,
+    )).toEqual([{ id: "gpu-a", url: "http://gpu-a:8188", capabilities: [] }]);
+  });
+
+  it("rejects malformed capabilities entries", () => {
+    expect(() => parseComfyBackends(
+      [{ id: "gpu-a", url: "http://gpu-a:8188", capabilities: "video" }] as unknown as ComfyBackend[],
+      undefined,
+    )).toThrow("expected an array of tag strings");
+    expect(() => parseComfyBackends(
+      [{ id: "gpu-a", url: "http://gpu-a:8188", capabilities: ["video", 42] }] as unknown as ComfyBackend[],
+      undefined,
+    )).toThrow("expected an array of tag strings");
+  });
+
+  it("does not attach capabilities to the flat env-var form", () => {
+    expect(parseComfyBackends("gpu-a=http://gpu-a:8188", undefined)).toEqual([
+      { id: "gpu-a", url: "http://gpu-a:8188" },
+    ]);
   });
 });
 

@@ -5,9 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-06
 
 ### Added
+
+- Backend capacity declarations: each backend may declare which workflows it
+  can accept via `capabilities` tags (JSON config only), and workflows declare
+  their required tags with a `[CAPABILITY]` marker node. `paint` only
+  auto-selects among backends offering every required tag, then picks the
+  least-queued one; an explicit `backend:` that cannot run the workflow fails
+  fast. Backends without a `capabilities` field accept everything (zero-config
+  setups are unaffected), and `capabilities: []` soft-disables a backend.
+  `paint_get_details` and `paint_validate_workflow(backend)` report the
+  workflow's required tags and per-backend fit; `paint_server_status` lists
+  every backend's capabilities and every workflow's requirements. Bundled
+  workflows now ship with `[CAPABILITY]` tags (e.g. `image, anima`).
 
 - `paint.input_files` entries are now matched by media type instead of strict
   position: each entry can be `{ path, type?: image|video|audio|file, slot?: order }`

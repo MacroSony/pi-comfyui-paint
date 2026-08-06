@@ -712,4 +712,62 @@ describe("createPaintTool generated media content", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("passes the workflow's [CAPABILITY] tags to backend selection", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-paint-caps-test-"));
+    try {
+      const workflowDir = path.join(tmpDir, "workflows");
+      fs.mkdirSync(workflowDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(workflowDir, "caps.json"),
+        JSON.stringify({
+          "1": {
+            class_type: "CLIPTextEncode",
+            inputs: { text: "" },
+            _meta: { title: "[VAR] PositivePrompt" },
+          },
+          "77": {
+            class_type: "PrimitiveStringMultiline",
+            inputs: { value: " video, h3 " },
+            _meta: { title: "[CAPABILITY]" },
+          },
+          "2": {
+            class_type: "SaveImage",
+            inputs: { filename_prefix: "test-output" },
+            _meta: { title: "[OUTPUT:any] Generated media" },
+          },
+        }),
+      );
+
+      vi.mocked(queuePrompt).mockResolvedValue("prompt-caps");
+      vi.mocked(pollHistory).mockResolvedValue({
+        "prompt-caps": {
+          status: { status_str: "success", completed: true, messages: [] },
+          outputs: {
+            "2": { images: [{ filename: "out.png", subfolder: "", type: "output" }] },
+          },
+        },
+      });
+      vi.mocked(downloadOutputsToDirectory).mockImplementation(async (_server, _outputs, dir) => {
+        const p = path.join(dir, "out.png");
+        fs.writeFileSync(p, Buffer.from("x"));
+        return [{ path: p, filename: "out.png", mimeType: "image/png" }];
+      });
+
+      const tool = createPaintTool(
+        { ...config, workflowDir, outputDir: path.join(tmpDir, "outputs") },
+        tmpDir,
+      );
+      await tool.execute(
+        { prompt: "test", workflow: "caps.json", background: true },
+        new AbortController().signal,
+      );
+
+      expect(vi.mocked(reserveBackend).mock.calls[0][1]).toMatchObject({
+        requiredCapabilities: ["video", "h3"],
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

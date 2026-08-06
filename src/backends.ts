@@ -1,6 +1,10 @@
 /** ComfyUI backend discovery and direct-assignment selection. */
 
 import { comfyFetch } from "./comfyui-client.js";
+import {
+  backendSupportsCapabilities,
+  missingCapabilities,
+} from "./capabilities.js";
 import type {
   BackendQueueSnapshot,
   ComfyBackend,
@@ -96,23 +100,94 @@ export async function getBackendQueueSnapshot(
   }
 }
 
+/**
+ * Describe why a backend cannot run a workflow, for diagnostics.
+ * Returns undefined when the backend accepts the workflow.
+ */
+export function backendFitDiagnostic(
+  backend: ComfyBackend,
+  requiredCapabilities: string[],
+): string | undefined {
+  if (requiredCapabilities.length === 0) return undefined;
+  const offered = backend.capabilities;
+  if (!offered) return undefined; // undeclared capabilities accept everything
+  const missing = missingCapabilities(offered, requiredCapabilities);
+  if (missing.length === 0) return undefined;
+  const offering =
+    offered.length > 0 ? offered.join(", ") : "nothing (capabilities: []) — backend is soft-disabled";
+  return (
+    `workflow requires ${requiredCapabilities.join(", ")}, but backend ${backend.id} only ` +
+    `offers: ${offering} (missing: ${missing.join(", ")})`
+  );
+}
+
 export interface BackendReservation {
   backend: ComfyBackend;
   snapshot: BackendQueueSnapshot;
   release(): void;
 }
 
-/** Reserve the least-loaded reachable backend for one imminent submission. */
+export interface ReserveBackendOptions {
+  /** Force a specific backend ID. It must support the required capabilities. */
+  preferredId?: string;
+  /** Required workflow capability tags; only backends offering all are eligible. */
+  requiredCapabilities?: string[];
+  /** Per-backend health-check timeout. */
+  timeoutMs?: number;
+}
+
+/**
+ * Reserve the least-loaded reachable backend that accepts the workflow's
+ * required capabilities. Backends without a declared capability list accept
+ * every workflow; an explicit preferred backend is validated against the
+ * requirements before any health check.
+ */
 export async function reserveBackend(
   backends: ComfyBackend[],
-  preferredId?: string,
+  options: ReserveBackendOptions = {},
   signal?: AbortSignal,
-  timeoutMs = 5000,
 ): Promise<BackendReservation> {
+  const requiredCapabilities = options.requiredCapabilities ?? [];
   if (signal?.aborted) throw abortError(signal);
-  const candidates = preferredId ? [getBackend(backends, preferredId)] : backends;
+
+  if (options.preferredId) {
+    const backend = getBackend(backends, options.preferredId);
+    const mismatch = backendFitDiagnostic(backend, requiredCapabilities);
+    if (mismatch) {
+      throw new Error(
+        `${mismatch}. Use a different backend, update its capabilities in ` +
+        "comfyui-paint.json, or call paint_get_details to inspect the fit.",
+      );
+    }
+  }
+
+  const candidates = options.preferredId
+    ? [getBackend(backends, options.preferredId)]
+    : backends.filter((backend) =>
+        backendSupportsCapabilities(backend.capabilities, requiredCapabilities),
+      );
+  if (candidates.length === 0) {
+    const detailLines = backends.map((backend) => {
+      const offered = backend.capabilities;
+      const offering =
+        offered === undefined
+          ? "accepts all workflows"
+          : offered.length > 0
+            ? `offers: ${offered.join(", ")}`
+            : "offers nothing (capabilities: []) — soft-disabled";
+      return `- ${backend.id}: ${offering}`;
+    });
+    throw new Error(
+      `No configured backend accepts workflow requirements [${requiredCapabilities.join(", ")}]:\n` +
+        `${detailLines.join("\n")}\n` +
+        "Update backend capabilities in comfyui-paint.json or force a backend with the backend parameter.",
+    );
+  }
+
   const settled = await Promise.allSettled(
-    candidates.map((backend) => getBackendQueueSnapshot(backend, signal, timeoutMs)),
+    candidates.map((backend) =>
+      getBackendQueueSnapshot(backend, signal, options.timeoutMs ?? 5000),
+    ),
   );
   if (signal?.aborted) throw abortError(signal);
 

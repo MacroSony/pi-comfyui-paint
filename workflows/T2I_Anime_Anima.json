@@ -206,5 +206,14 @@
     "_meta": {
       "title": "[NOTE]"
     }
+  },
+  "79": {
+    "inputs": {
+      "value": "image, anima"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "[CAPABILITY]"
+    }
   }
 }

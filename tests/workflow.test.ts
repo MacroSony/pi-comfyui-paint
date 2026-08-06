@@ -292,6 +292,30 @@ describe("parseWorkflowDetails", () => {
     });
   });
 
+  it("extracts capabilities from [CAPABILITY] marker nodes", () => {
+    const details = parseWorkflowDetails({
+      "77": {
+        inputs: { value: " video, h3, video " },
+        _meta: { title: "[CAPABILITY] Video workflow" },
+      },
+    });
+    expect(details.capabilities).toEqual(["video", "h3"]);
+  });
+
+  it("unions capabilities across multiple marker nodes", () => {
+    const details = parseWorkflowDetails({
+      "10": { inputs: { value: "video, h3" }, _meta: { title: "[CAPABILITY]" } },
+      "11": { inputs: { text: "image, ANIME" }, _meta: { title: "[CAPABILITY]" } },
+      "12": { inputs: { value: "" }, _meta: { title: "[CAPABILITY] empty" } },
+    });
+    expect(details.capabilities).toEqual(["video", "h3", "image", "anime"]);
+  });
+
+  it("returns no capabilities for untagged workflows", () => {
+    const details = parseWorkflowDetails({});
+    expect(details.capabilities).toEqual([]);
+  });
+
   it("handles empty workflow gracefully", () => {
     const details = parseWorkflowDetails({});
     expect(details.variables).toEqual({});
@@ -300,6 +324,7 @@ describe("parseWorkflowDetails", () => {
     expect(details.rawVars).toEqual({});
     expect(details.fileNodes).toEqual({});
     expect(details.inputSlots).toEqual({});
+    expect(details.capabilities).toEqual([]);
   });
 });
 
@@ -361,6 +386,32 @@ describe("validateWorkflow", () => {
     ).toBe(true);
   });
 
+  it("warns when a [CAPABILITY] marker node has an empty tag list", () => {
+    const wf: Record<string, unknown> = {
+      "77": {
+        _meta: { title: "[CAPABILITY]" },
+        class_type: "PrimitiveStringMultiline",
+        inputs: { value: "" },
+      },
+    };
+    const result = validateWorkflow(wf);
+    expect(
+      result.warnings.some((w) => w.includes("[CAPABILITY] node 77") && w.includes("empty tag list")),
+    ).toBe(true);
+  });
+
+  it("does not warn for a populated [CAPABILITY] marker node", () => {
+    const wf: Record<string, unknown> = {
+      "77": {
+        _meta: { title: "[CAPABILITY]" },
+        class_type: "PrimitiveStringMultiline",
+        inputs: { value: "video, h3" },
+      },
+    };
+    const result = validateWorkflow(wf);
+    expect(result.warnings.some((w) => w.includes("empty tag list"))).toBe(false);
+  });
+
   it("reports valid workflow with no errors", () => {
     const wf = loadWorkflowJson(path.join(FIXTURES, "minimal-workflow.json"))!;
     const result = validateWorkflow(wf);
@@ -391,4 +442,12 @@ describe("bundled workflows", () => {
       expect(result.errors).toEqual([]);
     });
   }
+
+  it("every bundled workflow declares capability tags for backend selection", () => {
+    for (const file of files) {
+      const wf = loadWorkflowJson(path.join(bundledDir, file));
+      const details = parseWorkflowDetails(wf!);
+      expect(details.capabilities.length, `${file} should declare [CAPABILITY] tags`).toBeGreaterThan(0);
+    }
+  });
 });

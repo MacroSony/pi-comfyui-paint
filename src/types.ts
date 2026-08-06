@@ -45,6 +45,12 @@ export type PaintJobIdStyle = "timestamp" | "uuid";
 export interface ComfyBackend {
   id: string;
   url: string;
+  /**
+   * Capability tags this backend offers (JSON config only). Absent = accepts
+   * every workflow; empty array = accepts none (soft-disable). Selection only
+   * narrows: a workflow's required tags must all be present here.
+   */
+  capabilities?: string[];
 }
 
 export interface BackendQueueSnapshot {
@@ -105,6 +111,8 @@ export interface ParsedWorkflow {
   inputSlots: Record<number, { keys: string[]; expectedType: string; optional?: boolean }>;
   fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string; optional?: boolean }>;
   loraSlots: LoraSlot[];
+  /** Capability tags required by this workflow's [CAPABILITY] marker nodes. */
+  capabilities: string[];
   rawVars: WorkflowVariables;
 }
 

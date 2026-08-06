@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseLoraSlots } from "./lora.js";
+import { splitCapabilityText } from "./capabilities.js";
 import type { ParsedWorkflow, WorkflowValidationResult, WorkflowVariables } from "./types.js";
 
 // ─── Loading ─────────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflo
   const outputTypes: Record<string, string> = {};
   const fileNodes: Record<number, { nodeId: string; keys: string[]; expectedType: string; optional?: boolean }> = {};
   const notesParts: string[] = [];
+  const capabilities: string[] = [];
   const loraSlots = parseLoraSlots(wf);
 
   for (const [nodeId, node] of Object.entries(wf)) {
@@ -148,6 +150,15 @@ export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflo
       const inputs = (n.inputs as Record<string, unknown>) ?? {};
       const noteText = ((inputs.value ?? inputs.text ?? "") as string).trim();
       if (noteText) notesParts.push(noteText);
+    } else if (/^\[CAPABILITY\]/i.test(title)) {
+      // Marker node declaring the capability tags this workflow requires.
+      // Mirrors [NOTE]: an inert primitive whose value input holds a
+      // comma-separated tag list. Multiple nodes are unioned.
+      const inputs = (n.inputs as Record<string, unknown>) ?? {};
+      const value = inputs.value ?? inputs.text ?? "";
+      if (typeof value === "string") {
+        capabilities.push(...splitCapabilityText(value));
+      }
     } else {
       const outMatch = title.match(/^\[OUTPUT:([^\]]+)\]/i);
       const fileMatch = title.match(/^\[FILE:([^:\]]+):(\d+)(?::\s*(optional))?\]/i);
@@ -187,6 +198,7 @@ export function parseWorkflowDetails(wf: Record<string, unknown>): ParsedWorkflo
     inputSlots,
     fileNodes,
     loraSlots,
+    capabilities,
     rawVars,
   };
 }
@@ -218,6 +230,21 @@ export function validateWorkflow(wf: Record<string, unknown>): WorkflowValidatio
     warnings.push(
       "No [VAR] PositivePrompt node found; paint.prompt will not be injected automatically.",
     );
+  }
+
+  // [CAPABILITY] marker nodes must carry a non-empty, comma-separated tag list.
+  const nodeEntriesForCaps = Object.entries(wf).filter(([, node]) => node && typeof node === "object");
+  for (const [nodeId, node] of nodeEntriesForCaps) {
+    const n = node as Record<string, unknown>;
+    const meta = (n._meta as Record<string, unknown>) ?? {};
+    if (!/^\[CAPABILITY\]/i.test(String(meta.title ?? ""))) continue;
+    const inputs = (n.inputs as Record<string, unknown>) ?? {};
+    const value = inputs.value ?? inputs.text ?? "";
+    if (typeof value !== "string" || !value.trim()) {
+      warnings.push(
+        `[CAPABILITY] node ${nodeId} has an empty tag list; provide comma-separated tags in its value input.`,
+      );
+    }
   }
   for (const [name, info] of Object.entries(rawVars)) {
     if (info.keys.length === 0) {
