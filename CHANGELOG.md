@@ -152,7 +152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `getObjectInfo` wraps the `/object_info` endpoint; URL normalization is
   shared through `normalizeComfyUrl`.
 - `COMFYUI_IMAGE_QUALITY` and `COMFYUI_IMAGE_MAX_DIMENSION` values are clamped
-  to valid ranges; `PI_PAINT_INLINE` is documented.
+  to valid ranges; `COMFYUI_INLINE_IMAGE_LIMIT` is documented.
 
 ### Fixed
 
